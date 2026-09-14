@@ -1159,7 +1159,11 @@
    Above the settings surface and below the fault card: an error still has to be readable, even on
    the first launch that produced it. */
 .zs-firstrun-layer {
-  position: absolute; inset: var(--zenith-title-bar-h) 0 0; z-index: 60;
+  /* fixed, not absolute: the settings layout can run taller than the viewport (it did on
+   * Wayland/Electron 44), and an absolutely-positioned layer then centers the dialog in a box
+   * whose top and bottom are both off-screen — clipping the heading and pushing the footer
+   * button half outside the card */
+  position: fixed; inset: var(--zenith-title-bar-h) 0 0; z-index: 60;
   display: grid; place-items: center; padding: var(--zn-6);
   background: rgba(6, 7, 9, .72);
 }

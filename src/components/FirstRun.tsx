@@ -57,7 +57,7 @@ export const FirstRun: React.FC<{
                     <kbd>{key}</kbd>
                   </React.Fragment>
                 ))}{' '}
-                anywhere in Windows — over any application, without leaving it.
+                anywhere — over any application, without leaving it.
               </p>
             </div>
           </li>
