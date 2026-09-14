@@ -2071,12 +2071,19 @@ function getNativeHelperExePath() {
   if (!NATIVE_HELPER_BIN) return null;
   if (cachedNativeHelperPath !== undefined) return cachedNativeHelperPath;
   const name = NATIVE_HELPER_BIN;
+  /**
+   * The unpacked copies come first: `child_process.spawn` cannot execute a file inside an asar
+   * archive (ENOTDIR), and existsSync happily reports the packed copy — a plain __dirname-first
+   * search made the packaged app spawn-reject its own helper forever. Dev has no app.asar, so the
+   * replace is a no-op there.
+   */
+  const unpackedDir = __dirname.replace("app.asar", "app.asar.unpacked");
   const candidates = [
+    path.join(unpackedDir, name),
+    path.join(unpackedDir, "native-helper", name),
     path.join(__dirname, name),
     path.join(__dirname, "native-helper", name),
     path.join(__dirname, "..", "resources", "bin", name),
-    path.join(__dirname.replace("app.asar", "app.asar.unpacked"), name),
-    path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "native-helper", name),
   ];
   if (process.resourcesPath) {
     candidates.push(path.join(process.resourcesPath, "resources", "bin", name));
@@ -2215,10 +2222,12 @@ function ensureRadialMouseBlocker() {
   radialMouseBlockerReady = false;
   const nativeHelper = getNativeHelperExePath();
   const blockerArgs = [isWaylandNative ? "mouse-blocker-evdev" : "mouse-blocker", String(process.pid)];
-  const child = nativeHelper
-    ? (diagLog(`[RadialBlocker] Spawning native helper: ${nativeHelper} (${blockerArgs[0]})`),
-       spawn(nativeHelper, blockerArgs, { windowsHide: true }))
-    : spawn(
+  let child;
+  try {
+    child = nativeHelper
+      ? (diagLog(`[RadialBlocker] Spawning native helper: ${nativeHelper} (${blockerArgs[0]})`),
+         spawn(nativeHelper, blockerArgs, { windowsHide: true }))
+      : spawn(
         "powershell",
         [
           "-NoProfile",
@@ -2231,6 +2240,15 @@ function ensureRadialMouseBlocker() {
         ],
         { windowsHide: true },
       );
+  } catch (e) {
+    diagLog(`[RadialBlocker] spawn failed: ${e.message} (${nativeHelper || "no helper binary"})`);
+    radialMouseBlocker = null;
+    radialMouseBlockerReady = false;
+    setTimeout(() => {
+      if (!radialMouseBlocker) requestBlockerRespawn?.();
+    }, 5000).unref?.();
+    return;
+  }
   radialMouseBlocker = child;
   child.stdout.on("data", (data) => {
     const text = data.toString();

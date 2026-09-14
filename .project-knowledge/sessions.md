@@ -15,3 +15,4 @@
 | 2026-09-14 | README updated for the dual-platform fork (badges, Linux install/build/quirks sections, Electron 44, Wayland capability notes) |
 | 2026-09-14 | Second force-quit report → block watchdog added (5 s stdin-silence auto-unblock, verified live); close-gesture releases the block earlier; user announces Linux-only fork rename (publish/repo field updates pending) |
 | 2026-09-14 | Four bug fixes from live use: moniker-wrapped shortcuts (launch+icons dead), fake autostart on Linux (real xdg autostart now), "Start with Windows" label, taskbar entry on wheel open (Wayland skipTaskbar limitation — documented, needs layer-shell) |
+| 2026-09-15 | First real install: deb + AppImage build green (deb maintainer field added), AppImage installed to ~/.local/bin with a menu entry. Found + fixed the packaged-only spawn ENOTDIR (unpacked-first helper resolution). Remaining stall on this machine = NVIDIA driver mismatch, needs reboot |
