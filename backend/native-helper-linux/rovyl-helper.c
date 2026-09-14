@@ -1046,7 +1046,10 @@ static void ev_handle_rel(struct ev_source *src, unsigned int code, int value) {
     int inside_monitor = ev_point_in(ev_last_x, ev_last_y, ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b);
     if (inside_monitor && !inside_allowed) return; /* swallow scroll outside the wheel */
   }
-  inject_button(src, code, value);
+  /* EV_REL — inject_button is EV_KEY-only; relaying motion through it writes garbage keys
+   * instead of movement and freezes the compositor's cursor */
+  emit_uinput(src, EV_REL, code, value);
+  emit_syn(src);
 }
 
 /* Click mode hands the button over mid-hold: too long or too drags, the app gets its press. */
