@@ -4,7 +4,12 @@ const path = require("path");
 
 const projectRoot = path.resolve(__dirname, "..");
 const distHtml = path.join(projectRoot, "dist", "index.html");
-const helperExe = path.join(projectRoot, "resources", "bin", "rovyl-helper.exe");
+const helperExe = path.join(
+  projectRoot,
+  "resources",
+  "bin",
+  process.platform === "win32" ? "rovyl-helper.exe" : "rovyl-helper-linux",
+);
 
 if (!fs.existsSync(distHtml)) {
   console.log("[Rovyl] Building production assets first...");

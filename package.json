@@ -59,7 +59,7 @@
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.2.15",
     "@vitejs/plugin-react": "^6.1.1",
-    "electron": "^28.3.3",
+    "electron": "^44.3.0",
     "electron-builder": "^24.9.1",
     "framer-motion": "^10.16.4",
     "lucide-react": "^0.292.0",
@@ -79,8 +79,7 @@
   "build": {
     "appId": "com.henry.rovyl",
     "productName": "Rovyl",
-    "icon": "build/icon.ico",
-    "files": [
+    "icon": "build/icon.ico",    "files": [
       "dist/**/*",
       "backend/**/*",
       "resources/bin/**/*",
@@ -92,7 +91,8 @@
       "backend/*.exe",
       "resources/bin/**/*",
       "node_modules/sql.js/dist/sql-wasm.wasm",
-      "node_modules/node-global-key-listener/bin/**/*"
+      "node_modules/node-global-key-listener/bin/**/*",
+      "backend/rovyl-helper-linux"
     ],
     "directories": {
       "output": "build-out"
@@ -138,10 +138,22 @@
       "languages": [
         "en-US"
       ]
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "icon": "public/icon.png",
+      "category": "Utility",
+      "artifactName": "${productName}-${version}-linux.${ext}"
     }
   },
   "engines": {
     "node": ">=20"
   },
-  "license": "GPL-3.0-or-later"
+  "license": "GPL-3.0-or-later",
+  "allowScripts": {
+    "electron@28.3.3": true
+  }
 }
