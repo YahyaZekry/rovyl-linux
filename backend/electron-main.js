@@ -56,6 +56,7 @@ const { exec, spawn, execFile, execFileSync } = require("child_process");
 const os = require("os");
 const fs = require("fs");
 const win32Launch = require("./win32-launch");
+const linuxDesktop = require("./linux-desktop.cjs");
 const { buildTrayMenuTemplate } = require("./tray-menu.cjs");
 const { normalizeFullPersistenceBlob } = require("./persistence-normalize.cjs");
 const {
@@ -390,7 +391,9 @@ loadEnvLocalFiles();
 if (process.env.ZENITH_DISABLE_HARDWARE_ACCELERATION === "1") {
   app.disableHardwareAcceleration();
   diagLog(
-    "[GPU] ZENITH_DISABLE_HARDWARE_ACCELERATION=1 — software rendering.",
+    process.platform === "linux" && process.env.ELECTRON_OZONE_PLATFORM_HINT === "auto"
+      ? "[GPU] ZENITH_DISABLE_HARDWARE_ACCELERATION=1 — software rendering. WARNING: on native Wayland this prevents the first frame of a transparent window (ready-to-show never fires and boot stalls). Remove the flag on Wayland."
+      : "[GPU] ZENITH_DISABLE_HARDWARE_ACCELERATION=1 — software rendering.",
   );
 } else {
   diagLog("[GPU] Hardware acceleration on for the transparent radial.");
@@ -400,7 +403,12 @@ if (process.env.ZENITH_DISABLE_HARDWARE_ACCELERATION === "1") {
 let cachedTerminal = null;
 const getPreferredTerminal = () => {
   if (cachedTerminal) return cachedTerminal;
-  
+
+  if (process.platform === "linux") {
+    cachedTerminal = linuxDesktop.detectTerminal() || "xterm";
+    return cachedTerminal;
+  }
+
   try {
     const { execSync } = require("child_process");
     // 1. Windows Terminal (wt.exe)
@@ -2038,26 +2046,51 @@ let radialTriggerListener = null;
 /** Drag slop: below this the press was a click, not an aim. */
 const TRIGGER_PASSTHROUGH_SLOP_PX = 6;
 
+const NATIVE_HELPER_BIN =
+  process.platform === "win32"
+    ? "rovyl-helper.exe"
+    : process.platform === "linux"
+      ? "rovyl-helper-linux"
+      : null;
+
+let cachedNativeHelperPath; // undefined = not probed yet
+
 function getNativeHelperExePath() {
+  if (!NATIVE_HELPER_BIN) return null;
+  if (cachedNativeHelperPath !== undefined) return cachedNativeHelperPath;
+  const name = NATIVE_HELPER_BIN;
   const candidates = [
-    path.join(__dirname, "rovyl-helper.exe"),
-    path.join(__dirname, "native-helper", "rovyl-helper.exe"),
-    path.join(__dirname, "..", "resources", "bin", "rovyl-helper.exe"),
-    path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "rovyl-helper.exe"),
-    path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "native-helper", "rovyl-helper.exe"),
+    path.join(__dirname, name),
+    path.join(__dirname, "native-helper", name),
+    path.join(__dirname, "..", "resources", "bin", name),
+    path.join(__dirname.replace("app.asar", "app.asar.unpacked"), name),
+    path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "native-helper", name),
   ];
   if (process.resourcesPath) {
-    candidates.push(path.join(process.resourcesPath, "resources", "bin", "rovyl-helper.exe"));
-    candidates.push(path.join(process.resourcesPath, "bin", "rovyl-helper.exe"));
-    candidates.push(path.join(process.resourcesPath, "app.asar.unpacked", "resources", "bin", "rovyl-helper.exe"));
-    candidates.push(path.join(process.resourcesPath, "app.asar.unpacked", "backend", "rovyl-helper.exe"));
+    candidates.push(path.join(process.resourcesPath, "resources", "bin", name));
+    candidates.push(path.join(process.resourcesPath, "bin", name));
+    candidates.push(path.join(process.resourcesPath, "app.asar.unpacked", "resources", "bin", name));
+    candidates.push(path.join(process.resourcesPath, "app.asar.unpacked", "backend", name));
   }
   for (const c of candidates) {
     try {
-      if (fs.existsSync(c)) return c;
+      if (fs.existsSync(c)) {
+        cachedNativeHelperPath = c;
+        return c;
+      }
     } catch (_) {}
   }
+  cachedNativeHelperPath = null;
   return null;
+}
+
+/**
+ * Windows always has the helper (exe, with PowerShell as fallback). Linux has no fallback: the
+ * gesture layer exists only when the built binary is present, so every helper gate goes through
+ * this instead of a bare platform check.
+ */
+function nativeHelperEnabled() {
+  return process.platform === "win32" || !!getNativeHelperExePath();
 }
 
 function radialMouseBlockerAssetPath() {
@@ -2121,7 +2154,7 @@ let radialCursorRestorePoint = null;
 let radialCursorParkPoint = null;
 
 function captureRadialCursor(center) {
-  if (process.platform !== "win32") return;
+  if (!nativeHelperEnabled()) return;
   if (!radialCursorCaptureWanted || !center) return;
   if (!radialCursorParked) {
     try {
@@ -2166,7 +2199,7 @@ function releaseRadialCursor() {
 }
 
 function ensureRadialMouseBlocker() {
-  if (process.platform !== "win32" || radialMouseBlocker) return;
+  if (!nativeHelperEnabled() || radialMouseBlocker) return;
   radialMouseBlockerReady = false;
   const nativeHelper = getNativeHelperExePath();
   const child = nativeHelper
@@ -2253,7 +2286,7 @@ function ensureRadialMouseBlocker() {
 }
 
 function setRadialMouseBlocking(bounds, monitorBounds) {
-  if (process.platform !== "win32") return;
+  if (!nativeHelperEnabled()) return;
   ensureRadialMouseBlocker();
   writeRadialMouseBlocker(
     `BLOCK ${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height} ${monitorBounds.x} ${monitorBounds.y} ${monitorBounds.width} ${monitorBounds.height}`,
@@ -2272,7 +2305,7 @@ function setRadialMouseBlocking(bounds, monitorBounds) {
  * with `slop`.
  */
 function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragPx) {
-  if (process.platform !== "win32") return;
+  if (!nativeHelperEnabled()) return;
   ensureRadialMouseBlocker();
   writeRadialMouseBlocker(
     `TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx}`,
@@ -2280,7 +2313,7 @@ function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragP
 }
 
 function clearRadialTriggerCapture() {
-  if (process.platform !== "win32") return;
+  if (!nativeHelperEnabled()) return;
   if (!radialMouseBlocker) return;
   writeRadialMouseBlocker("TRIGGER OFF");
 }
@@ -7183,6 +7216,28 @@ const runExecuteCommand = async (command, commandType, options = {}) => {
           break;
         }
 
+        case "exec_sh": {
+          /**
+           * Linux app launch: the line goes through /bin/sh exactly as a terminal would run it,
+           * detached so the child outlives us. Covers plain executables, `Exec=`-style lines with
+           * arguments, and shell builtins people put in custom commands.
+           */
+          const child = spawn("/bin/sh", ["-c", String(cmd || "").trim()], {
+            detached: true,
+            stdio: "ignore",
+          });
+          child.on("error", (err) => {
+            diagLog(`  ✗ [${method}] Failed: ${err.message}`);
+            reject(err);
+          });
+          child.on("spawn", () => {
+            child.unref();
+            diagLog(`  ✓ [${method}] Success!`);
+            resolve(true);
+          });
+          break;
+        }
+
         case "exec_direct": {
           const terminal = getPreferredTerminal();
           if (process.platform === "win32") {
@@ -7307,7 +7362,16 @@ const runExecuteCommand = async (command, commandType, options = {}) => {
     const finalCmds = (commandsToRun.length === 0 && openEmptyIfNoCmds) ? [""] : commandsToRun;
     
     if (finalCmds.length === 0) return;
-    
+
+    if (process.platform === "linux") {
+      const terminal = getPreferredTerminal();
+      for (const cmd of finalCmds) {
+        diagLog(`  → [AutoCommands] Spawning ${terminal} in ${workingDir}`);
+        linuxDesktop.spawnTerminal(terminal, workingDir, cmd || "");
+      }
+      return;
+    }
+
     const terminal = getPreferredTerminal();
     let workingDir = process.cwd();
     const resolvedWd = extractTerminalWorkingDir(explicitWorkingDirectory) || extractTerminalWorkingDir(targetPath);
@@ -7446,7 +7510,37 @@ const runExecuteCommand = async (command, commandType, options = {}) => {
 
     let methodsToTry = [];
 
-    if (commandType === "app") {
+    /**
+     * Linux: a picker entry is a desktop id and launches through gio/gtk-launch; anything else
+     * is a command line for /bin/sh. The Windows AUMID/IDE heuristics below mean nothing here,
+     * so the whole app branch is bypassed rather than parametrised.
+     */
+    if (process.platform === "linux" && commandType === "app") {
+      const linuxCommand = resolvedCommand.trim();
+      if (linuxCommand.startsWith(linuxDesktop.APPS_SCHEME)) {
+        const launched = await linuxDesktop.launchDesktopId(
+          linuxCommand.slice(linuxDesktop.APPS_SCHEME.length),
+        );
+        if (launched) {
+          diagLog(`\n✓✓✓ EXEC_SUCCESS: Launched desktop entry ✓✓✓\n`);
+          return launchOk("desktop-entry");
+        }
+        return launchFailed(`Failed to run "${linuxCommand}".`, {
+          command: trimmedCommand,
+          resolvedCommand: linuxCommand,
+          commandType,
+          method: "desktop-entry",
+          errorCode: "ENOENT",
+          raw: "The .desktop entry could not be launched (no gio/gtk-launch, or the entry is gone).",
+        });
+      }
+      if (/^(https?:\/\/|steam:|discord:|spotify:)/i.test(linuxCommand)) {
+        methodsToTry = ["shell.openExternal"];
+      } else {
+        methodsToTry = ["exec_sh"];
+      }
+      diagLog(`[Exec] Linux command line: ${linuxCommand}`);
+    } else if (commandType === "app") {
       let finalCommand = resolvedCommand.trim();
       const originalAumidCommand = finalCommand; // Keep original in case mapping fails
       const lowerCmd = finalCommand.toLowerCase();
@@ -7730,7 +7824,7 @@ function foregroundFocusAssetPath() {
 }
 
 function ensureForegroundFocusHelper() {
-  if (process.platform !== "win32" || foregroundFocusHelper) return;
+  if (!nativeHelperEnabled() || foregroundFocusHelper) return;
   foregroundFocusHelperReady = false;
   const nativeHelper = getNativeHelperExePath();
   const child = nativeHelper
@@ -8009,7 +8103,8 @@ function stopForegroundFocusHelper() {
  * foreground thread (in the helper) does `SetForegroundWindow` go through.
  */
 function stealForegroundForMainWindow() {
-  if (process.platform !== "win32") return;
+  if (process.platform !== "win32" && process.platform !== "linux") return;
+  if (!nativeHelperEnabled()) return;
   if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return;
   const now = Date.now();
   if (now < foregroundStealBusyUntil) return;
@@ -8017,7 +8112,10 @@ function stealForegroundForMainWindow() {
 
   let hwnd;
   try {
-    hwnd = mainWindow.getNativeWindowHandle().readBigUInt64LE(0).toString();
+    /** X11 window ids are 32-bit; Windows HWNDs read as 64. The helper takes the number either way. */
+    hwnd = process.platform === "win32"
+      ? mainWindow.getNativeWindowHandle().readBigUInt64LE(0).toString()
+      : mainWindow.getNativeWindowHandle().readUInt32LE(0).toString();
   } catch (e) {
     diagLog(`[Foreground] HWND unavailable: ${e.message}`);
     return;
@@ -8264,6 +8362,13 @@ ipcMain.on("set-window-opacity", (event, opacity) => {
 
 
 ipcMain.handle("get-onboarding-apps", async () => {
+  if (process.platform === "linux") {
+    try {
+      return scanStartupAppsLinux();
+    } catch (e) {
+      return [];
+    }
+  }
   return new Promise((resolve) => {
     const targetApps = ["Chrome", "Edge", "Discord", "Spotify", "Steam", "VS Code", "Visual Studio Code", "Notepad", "Calculadora", "Calculator"];
     const psScriptContent = `
@@ -8300,8 +8405,46 @@ ipcMain.handle("get-onboarding-apps", async () => {
   });
 });
 
-// IPC: Get recommended apps for initial workspace (Discovery)
+/**
+ * The .desktop twin of the Get-StartApps discovery scripts: high-value apps first, then the
+ * scan order, capped at five — same {Name, Path, Command, TargetPath} shape the PowerShell
+ * scripts emit, with `desktop:` ids the launch ladder and icon pipeline understand.
+ */
+const scanStartupAppsLinux = () => {
+  const all = linuxDesktop.listDesktopApps();
+  const priority = [
+    "chrome", "firefox", "visual studio code", "vs code", "discord", "spotify",
+    "telegram", "steam", "obsidian", "cursor", "figma", "slack", "teams", "zoom",
+  ];
+  const picked = [];
+  const seen = new Set();
+  const push = (app) => {
+    seen.add(app.Path);
+    picked.push({ Name: app.Name, Path: app.Path, Command: app.Path, TargetPath: "" });
+  };
+  for (const term of priority) {
+    const match = all.find((a) => !seen.has(a.Path) && a.Name.toLowerCase().includes(term));
+    if (match) push(match);
+    if (picked.length >= 5) break;
+  }
+  for (const app of all) {
+    if (picked.length >= 5) break;
+    if (!seen.has(app.Path)) push(app);
+  }
+  return picked;
+};
+
 ipcMain.handle("get-startup-apps", async () => {
+  if (process.platform === "linux") {
+    try {
+      const result = scanStartupAppsLinux();
+      diagLog(`[Discovery] Success: Found ${result.length} apps`);
+      return result;
+    } catch (e) {
+      diagLog(`[Discovery] linux scan error: ${e.message}`);
+      return [];
+    }
+  }
   return new Promise((resolve) => {
     diagLog("[Discovery] Running Smart Discovery for initial apps...");
 
@@ -9510,6 +9653,23 @@ ipcMain.handle("get-file-icon", async (event, filePath) => {
 });
 
 async function extractIconUncached(filePath) {
+  if (process.platform === "linux") {
+    if (String(filePath || "").startsWith(linuxDesktop.APPS_SCHEME)) {
+      const dataUrl = linuxDesktop.readIconDataUrl(filePath.slice(linuxDesktop.APPS_SCHEME.length));
+      if (dataUrl) {
+        diagLog(`[IconRequest] Theme icon for ${filePath}`);
+        return rememberFileIcon(filePath, dataUrl);
+      }
+      return null;
+    }
+    try {
+      const icon = await app.getFileIcon(filePath, { size: "large" });
+      return rememberFileIcon(filePath, icon.toDataURL());
+    } catch (e) {
+      diagLog(`[IconRequest] getFileIcon failed for ${filePath}: ${e.message}`);
+      return null;
+    }
+  }
   try {
     diagLog(`[IconRequest] Fetching icon for: ${filePath}`);
 
@@ -9672,6 +9832,14 @@ function getPowerShellExePath() {
 }
 
 function scanInstalledApps() {
+  if (process.platform === "linux") {
+    try {
+      return Promise.resolve(linuxDesktop.listDesktopApps());
+    } catch (e) {
+      diagLog(`[get-installed-apps] linux scan failed: ${e.message}`);
+      return Promise.resolve([]);
+    }
+  }
   return new Promise((resolve) => {
     const { exec } = require("child_process");
 
