@@ -2042,6 +2042,8 @@ let pendingRadialMouseBlockCommand = null;
  * is impossible, because a hook that returns 1 hides the button from GetAsyncKeyState.
  */
 let radialTriggerListener = null;
+/** Set by the trigger owner once the hook exists: respawns a dead helper and re-arms the capture. */
+let requestBlockerRespawn = null;
 
 /** Drag slop: below this the press was a click, not an aim. */
 const TRIGGER_PASSTHROUGH_SLOP_PX = 6;
@@ -2299,6 +2301,19 @@ function ensureRadialMouseBlocker() {
       radialCursorParkPoint = null;
       radialCursorRestorePoint = null;
       pendingRadialCursorCommand = null;
+      stopWaylandPosFeed();
+      /**
+       * A dead helper is a silent dead gesture: the trigger path never re-ensures the process
+       * (only wheel-open and settings changes do), so without a respawn the hook stays
+       * armed-in-name and middle clicks do nothing until the app restarts. The actual respawn
+       * lives with the trigger owner (`requestBlockerRespawn`) — `mouseHook` is not visible at
+       * this scope. The 1 s delay keeps a crash-looping helper from spinning.
+       */
+      if (!isAppQuitting) {
+        setTimeout(() => {
+          if (!radialMouseBlocker) requestBlockerRespawn?.();
+        }, 1000).unref?.();
+      }
     }
   });
 }
@@ -6482,6 +6497,14 @@ app.whenReady().then(async () => {
   } else {
     syncMouseHookState();
   }
+
+  /** A dead helper respawns here, where the hook state actually lives. */
+  requestBlockerRespawn = () => {
+    if (isAppQuitting) return;
+    diagLog("[RadialBlocker] helper died — respawning and re-arming the trigger");
+    mouseHook = null;
+    syncMouseHookState();
+  };
 });
 
 // IPC: renderer updates game mode (we also hydrate from config-v2.json at startup / save-full-config)
