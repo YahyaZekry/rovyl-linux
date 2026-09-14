@@ -2245,6 +2245,13 @@ function ensureRadialMouseBlocker() {
         } catch (e) {
           diagLog(`[RadialBlocker] record mouse: ${e.message}`);
         }
+      } else if (line === "BLOCK_CLICK") {
+        /** A click the helper swallowed outside the wheel/panel: the renderer closes what it is showing. */
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("block-click");
+        } catch (e) {
+          diagLog(`[RadialBlocker] block-click forward: ${e.message}`);
+        }
       } else if (line === "SHORTCUT_DOWN") {
         try {
           triggerRadialShortcut();
@@ -6257,7 +6264,13 @@ app.whenReady().then(async () => {
       virtualKey,
       mode,
       TRIGGER_PASSTHROUGH_SLOP_PX,
-      MMB_CLICK_MAX_MS,
+      /**
+       * The helper's hold threshold IS the menu boundary: past it the press becomes the app's
+       * middle click and main never sees a menu. It was MMB_CLICK_MAX_MS (400ms) — slower
+       * menu clicks landed in the app instead ("opened the app, not the menu"). MMB_CLICK_BACKSTOP_MS
+       * (1s) is what main itself treats as the click/hold edge, so both now classify identically.
+       */
+      MMB_CLICK_BACKSTOP_MS,
       MMB_CLICK_DRAG_PX,
     );
 

@@ -270,6 +270,7 @@ static void handle_button_press(int button, int x, int y) {
   if (blocking) {
     int inside_allowed = point_in(x, y, block_l, block_t, block_r, block_b);
     int inside_monitor = point_in(x, y, mon_l, mon_t, mon_r, mon_b);
+    if (inside_monitor && !inside_allowed) emit("BLOCK_CLICK");
     XAllowEvents(dpy, inside_monitor && !inside_allowed ? AsyncPointer : ReplayPointer, CurrentTime);
     return;
   }
@@ -1029,7 +1030,11 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
   if (ev_blocking) {
     int inside_allowed = ev_point_in(ev_last_x, ev_last_y, ev_block_l, ev_block_t, ev_block_r, ev_block_b);
     int inside_monitor = ev_point_in(ev_last_x, ev_last_y, ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b);
-    if (inside_monitor && !inside_allowed) return; /* swallow */
+    if (inside_monitor && !inside_allowed) {
+      /* swallow — and tell main, so a click away from the wheel/panel can close it */
+      if (press) emit("BLOCK_CLICK");
+      return;
+    }
   }
 
   inject_button(src, code, value);

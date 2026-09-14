@@ -308,6 +308,8 @@ export interface ElectronAPI {
   wasOpenedAtLogin?: () => Promise<boolean>;
   /** The main confirms the app really has an IDE profile with an MRU (do not guess by name). */
   appSupportsRecents?: (appName: string, appCommand: string) => Promise<boolean>;
+  /** A click the gesture helper swallowed outside the wheel/panel — click away closes it. */
+  onBlockClick?: (callback: () => void) => () => void;
   onOpenMenu: (
     callback: (data: {
       x: number;

@@ -2092,6 +2092,19 @@ export default function App() {
       });
     });
 
+    /**
+     * A click the helper swallowed outside the wheel/panel: click away closes whatever is
+     * showing. Closing the panel here rides the normal close path (window mode back to
+     * `windowed`), which is also what releases the helper's input block.
+     */
+    const cleanupBlockClick = window.electron?.onBlockClick?.(() => {
+      if (closeMenuFromTrigger()) return;
+      if (isSettingsOpenRef.current || isDashboardOpenRef.current) {
+        setIsSettingsOpen(false);
+        setIsDashboardOpen(false);
+      }
+    });
+
     const cleanupPrepareRadial = window.electron?.onPrepareRadialShow?.((payload) => {
       /**
        * `vacatePanel`: main is about to MOVE the window out from under the panel, and what it hides
@@ -2202,6 +2215,7 @@ export default function App() {
 
     return () => {
       cleanupMenu?.();
+      cleanupBlockClick?.();
       cleanupPrepareRadial?.();
       cleanupRadialNativeRevealed?.();
       cleanupDashboard?.();

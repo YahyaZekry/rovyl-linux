@@ -34,6 +34,12 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.on("open-menu", listener);
     return () => ipcRenderer.removeListener("open-menu", listener);
   },
+  /** A click the gesture helper swallowed outside the wheel/panel: click-away should close it. */
+  onBlockClick: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("block-click", listener);
+    return () => ipcRenderer.removeListener("block-click", listener);
+  },
   /**
    * zenith-verify:radial-handshake-preload — Main is about to show the radial — paint a neutral
    * cover and confirm before `open-menu` (avoids a flash after minimize).
