@@ -938,6 +938,14 @@ static long long ev_down_at;
 static long long ev_gesture_dx, ev_gesture_dy;
 
 static volatile int ev_blocking;
+/*
+ * The block must never outlive the session that asked for it: main proves the wheel/panel is
+ * alive by streaming `POS` every 30 ms, so stdin going quiet for BLOCK_WATCHDOG_MS while
+ * blocking means the other side is gone (crashed renderer, lost race, anything) — release the
+ * block ourselves. Worst case for the user is a few seconds of dead clicks, never a forced quit.
+ */
+#define BLOCK_WATCHDOG_MS 5000
+static long long ev_last_stdin_ms;
 static int ev_block_l, ev_block_t, ev_block_r, ev_block_b;
 static int ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b;
 static int ev_last_x = -1, ev_last_y = -1;
@@ -1161,6 +1169,7 @@ static int ev_stdin_line(char *buf, size_t cap) {
 static void run_mouse_blocker_evdev(const char *name_filter) {
   for (int i = 0; i < MAX_DEVICES; i++) sources[i] = (struct ev_source){-1, -1, "", ""};
   scan_input_devices(name_filter);
+  ev_last_stdin_ms = evdev_now_ms();
   emit("READY");
   if (source_count == 0) {
     if (name_filter) {
@@ -1197,6 +1206,7 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
     if (ready < 0 && errno != EINTR) break;
 
     if (ready > 0 && FD_ISSET(0, &fds)) {
+      ev_last_stdin_ms = evdev_now_ms();
       if (ev_stdin_line(buf, sizeof(buf)) < 0) break; /* parent died */
     }
     for (int i = source_count - 1; i >= 0; i--) {
@@ -1245,6 +1255,11 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
     }
     if (ready == 0) {
       rescan_input_devices(name_filter);
+    }
+    if (ev_blocking && evdev_now_ms() - ev_last_stdin_ms > BLOCK_WATCHDOG_MS) {
+      ev_blocking = 0;
+      fprintf(stderr, "rovyl-helper-linux: no session heartbeat for %d ms while blocking — auto-unblocked\n",
+              BLOCK_WATCHDOG_MS);
     }
     ev_poll_click_hold();
   }

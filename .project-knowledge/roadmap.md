@@ -23,6 +23,8 @@ Port Rovyl to Linux: X11 full experience, Wayland = hotkey-only fallback.
 
 ## Known Bugs
 
+- [ ] Hotplug rescan is flaky when a device appears within ~100 ms of helper start (udev ACL lands after node creation); fine for the boot case, matters for BT reconnect — needs a retry-until-grab loop per device *(found: 2026-09-14)*
+
 - See `TODO.md` open items (unchecked): §1.2 dead `fixedPosition` key, §1.4 offline claim, §1.5 cursor-follow architecture, §2.2–2.5 dead code/licensing decisions, plus §4+ sections
 - (found 2026-09-14) `@electron/get` extract silently produced a broken `dist/` on this machine — manual unzip + `path.txt` (`electron`, no newline) fixed; watch for it after fresh `npm install`
 - (found 2026-09-14) On Wayland sessions the XWayland gesture grab only sees X11 clients' pointer events; native Wayland windows never trigger and are immune to BLOCK — by design, documented fallback is hotkey
