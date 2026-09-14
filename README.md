@@ -6,13 +6,14 @@
 
 **One gesture. Any destination.**
 
-A radial launcher for Windows. Hold the middle mouse button anywhere, aim, release.
+A radial launcher for Windows and Linux. Hold the middle mouse button anywhere, aim, release.
 
 [![Download Rovyl for Windows](https://img.shields.io/badge/Download%20for%20Windows-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/arshit09/rovyl/releases/latest)
 
-![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4?style=flat-square)
-![Electron](https://img.shields.io/badge/Electron-28-47848f?style=flat-square&logo=electron&logoColor=white)
-![React](https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux-0078d4?style=flat-square)
+![Linux](https://img.shields.io/badge/Linux-Wayland%20%7C%20X11-fcc624?style=flat-square&logo=linux&logoColor=black)
+![Electron](https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white)
+![React](https://img.shields.io/badge/React-18-149eca?style=flat-square&logo=react&logoColor=white)
 
 </div>
 
@@ -35,10 +36,10 @@ never puts a window between you and your work.
 
 ## Features
 
-- **Opens over anything** — any window, including fullscreen apps
+- **Opens over anything** — any window, including fullscreen apps (fullscreen coverage on Wayland is planned; see the Linux notes)
 - **Your monitor** — always the main screen, or the one your pointer is already on
 - **Launch anything** — applications, folders, files, websites, custom commands
-- **Automatic discovery** — reads your Start Menu and extracts real app icons
+- **Automatic discovery** — reads your Start Menu (Windows) or your installed applications (Linux) and extracts real app icons
 - **Workspaces** — separate wheels for work, games, streaming; switch with a number key
 - **Your trigger** — middle mouse button, a side button, or a global hotkey
 - **Two aiming modes** — by direction for speed, or by pointer for precision
@@ -68,6 +69,32 @@ steps:
    repository, so this is the only manual download you need.
 
 **From source** — see [Building](#building) below.
+
+### Linux
+
+Linux support is new in this fork and is **Wayland-first** — the gesture works on native
+Wayland (KDE Plasma 6, wlroots compositors) as well as X11, with no XWayland requirement.
+
+- **Packages** — `npm run dist` builds a `.deb` (Debian 12/13, Ubuntu 22.04/24.04) and an
+  `.AppImage` (self-updating).
+- **Permissions** — the gesture helper reads your mouse at the kernel level and re-injects
+  events through a virtual device, so your user needs to be in the `input` group
+  (`sudo usermod -aG input $USER`, then log out and back in). The deb sets this up.
+- **Session type** — on Wayland the helper uses evdev + uinput; on X11 it uses X11 grabs.
+  Neither needs a compositor plugin.
+- **After first launch**: your pointer now flows through a Rovyl virtual device, which your
+  desktop treats as **its own mouse entry** — in KDE's mouse settings, pick the
+  `rovyl-fwd-…` device and match its pointer speed to your physical mouse, and enable
+  **"Hold down middle button and move mouse to scroll"** on it if you want autoscroll on
+  long middle-holds. Short middle clicks pass through to apps as usual.
+- **Hardened kernels** — if the window never appears, your kernel may block Electron's
+  sandbox; launch with `ELECTRON_DISABLE_SANDBOX=1`. Do **not** set
+  `ZENITH_DISABLE_HARDWARE_ACCELERATION=1` on Wayland — software rendering cannot produce
+  the transparent window's first frame and the app stalls at startup.
+- **Known gaps on Wayland** — the wheel opens centred on the chosen monitor (not at the
+  cursor), it cannot cover fullscreen games, and exact pointer warping (the clickless
+  execution mode) is unavailable. See [docs/wayland-port-plan.md](docs/wayland-port-plan.md)
+  for the full capability matrix and what's planned.
 
 ## How it works
 
@@ -119,15 +146,23 @@ Number keys move between workspaces while the wheel is open, or use the picker i
 
 ## Building
 
-Requires **Windows 10 or 11** and **Node 20+**. Windows-only by design: the trigger, the
-icon pipeline and the window handling all depend on Win32 behaviour.
+Requires **Node 20+**. On Linux you also need `build-essential`, `libx11-dev` and
+`libxtst-dev` for the native gesture helper (`gcc` compiles it automatically as part of
+the build).
 
 ```bash
-git clone https://github.com/arshit09/rovyl
+git clone https://github.com/YahyaZekry/rovyl
 cd rovyl
 npm install
 npm start
 ```
+
+Platform targets: `npm run dist` produces an NSIS installer on Windows and a `.deb` /
+`.AppImage` on Linux. The native helper builds per platform
+(`rovyl-helper.exe` from C# on Windows, `rovyl-helper-linux` from C on Linux) and speaks
+the same line protocol to the main process. Note that the jump to Electron 44 happened on
+Linux; a Windows regression pass is still pending — see
+[.project-knowledge/roadmap.md](.project-knowledge/roadmap.md).
 
 `npm start` brings up Vite and waits for it before launching Electron. To run the halves
 separately, use `npm run dev` and `npm run electron`.

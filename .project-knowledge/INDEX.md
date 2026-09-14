@@ -3,7 +3,7 @@
 > Last updated: 2026-09-14
 > Status: Active
 > Stack: Electron 28 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
-> Current goal: Linux port — Wayland is the primary target (maintainer is Wayland-only); X11 done, Electron 44 landed, evdev/uinput gesture helper is next
+> Current goal: Dual-platform (Windows + Linux/Wayland-first) — gesture, discovery and packaging work on Linux; remaining: CI workflows, deb polish, Windows regression pass after the Electron 44 jump
 
 ## What This Project Does
 
