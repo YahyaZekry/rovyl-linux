@@ -14,3 +14,4 @@
 | 2026-09-14 | Autoscroll root cause: KDE per-device setting on the forwarded pointer (user fixed by enabling it there). Cleaned leaked test devices; helper now skips all rovyl-* named devices |
 | 2026-09-14 | README updated for the dual-platform fork (badges, Linux install/build/quirks sections, Electron 44, Wayland capability notes) |
 | 2026-09-14 | Second force-quit report → block watchdog added (5 s stdin-silence auto-unblock, verified live); close-gesture releases the block earlier; user announces Linux-only fork rename (publish/repo field updates pending) |
+| 2026-09-14 | Four bug fixes from live use: moniker-wrapped shortcuts (launch+icons dead), fake autostart on Linux (real xdg autostart now), "Start with Windows" label, taskbar entry on wheel open (Wayland skipTaskbar limitation — documented, needs layer-shell) |

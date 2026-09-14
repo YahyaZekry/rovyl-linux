@@ -3741,17 +3741,64 @@ app.whenReady().then(async () => {
 
   const syncLoginItemSettings = (openAtLogin) => {
     try {
-      if (typeof openAtLogin === "boolean") {
-        const currentLoginSettings = app.getLoginItemSettings();
-        if (currentLoginSettings.openAtLogin !== openAtLogin) {
-          app.setLoginItemSettings({
-            openAtLogin: openAtLogin,
-            path: app.getPath("exe"),
-          });
-          console.log(
-            `Login item settings synced: openAtLogin = ${openAtLogin}`,
-          );
+      if (typeof openAtLogin !== "boolean") return;
+      if (process.platform === "linux") {
+        /**
+         * Electron's login-item API is macOS/Windows only — on Linux it silently does nothing.
+         * XDG autostart is the real mechanism: point a `rovyl.desktop` entry at the installed
+         * launcher (the deb/AppImage desktop file when present, else the AppImage / argv).
+         */
+        const autostartDir = path.join(os.homedir(), ".config", "autostart");
+        const autostartFile = path.join(autostartDir, "rovyl.desktop");
+        if (!openAtLogin) {
+          try { fs.unlinkSync(autostartFile); } catch (_) {}
+          return;
         }
+        let execLine = null;
+        for (const f of [
+          "/usr/share/applications/rovyl.desktop",
+          "/usr/local/share/applications/rovyl.desktop",
+          path.join(os.homedir(), ".local", "share", "applications", "rovyl.desktop"),
+        ]) {
+          try {
+            const m = /^Exec=(.+)$/m.exec(fs.readFileSync(f, "utf8"));
+            if (m) { execLine = m[1].trim(); break; }
+          } catch (_) {}
+        }
+        if (!execLine && process.env.APPIMAGE) {
+          execLine = `"${process.env.APPIMAGE}"`;
+        }
+        if (!execLine) {
+          const appPath = path.resolve(process.argv[1] || process.cwd());
+          execLine = `"${process.argv[0]}" "${appPath}"`;
+        }
+        fs.mkdirSync(autostartDir, { recursive: true });
+        fs.writeFileSync(
+          autostartFile,
+          [
+            "[Desktop Entry]",
+            "Type=Application",
+            "Name=Rovyl",
+            `Exec=${execLine}`,
+            "Terminal=false",
+            "X-GNOME-Autostart-enabled=true",
+            "Categories=Utility;",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        console.log(`Login item settings synced: openAtLogin = ${openAtLogin} (xdg autostart)`);
+        return;
+      }
+      const currentLoginSettings = app.getLoginItemSettings();
+      if (currentLoginSettings.openAtLogin !== openAtLogin) {
+        app.setLoginItemSettings({
+          openAtLogin: openAtLogin,
+          path: app.getPath("exe"),
+        });
+        console.log(
+          `Login item settings synced: openAtLogin = ${openAtLogin}`,
+        );
       }
     } catch (e) {
       console.error("Failed to sync login item settings:", e);
@@ -7593,7 +7640,13 @@ const runExecuteCommand = async (command, commandType, options = {}) => {
      * so the whole app branch is bypassed rather than parametrised.
      */
     if (process.platform === "linux" && commandType === "app") {
-      const linuxCommand = resolvedCommand.trim();
+      let linuxCommand = resolvedCommand.trim();
+      /**
+       * Repair shortcuts saved through the Windows picker path: `shell:AppsFolder\desktop:x`
+       * carries a moniker that means nothing here — the desktop id inside it is the real command.
+       */
+      const moniker = /^shell:appsfolder[\\/](.+)$/i.exec(linuxCommand);
+      if (moniker) linuxCommand = moniker[1];
       if (linuxCommand.startsWith(linuxDesktop.APPS_SCHEME)) {
         const launched = await linuxDesktop.launchDesktopId(
           linuxCommand.slice(linuxDesktop.APPS_SCHEME.length),
@@ -9732,8 +9785,11 @@ ipcMain.handle("get-file-icon", async (event, filePath) => {
 
 async function extractIconUncached(filePath) {
   if (process.platform === "linux") {
-    if (String(filePath || "").startsWith(linuxDesktop.APPS_SCHEME)) {
-      const dataUrl = linuxDesktop.readIconDataUrl(filePath.slice(linuxDesktop.APPS_SCHEME.length));
+    /** Saved shortcuts can carry the Windows moniker in front of the desktop id. */
+    const moniker = /^shell:appsfolder[\\/](.+)$/i.exec(String(filePath || "").trim());
+    const iconRequestPath = moniker ? linuxDesktop.APPS_SCHEME + moniker[1] : String(filePath || "");
+    if (iconRequestPath.startsWith(linuxDesktop.APPS_SCHEME)) {
+      const dataUrl = linuxDesktop.readIconDataUrl(iconRequestPath.slice(linuxDesktop.APPS_SCHEME.length));
       if (dataUrl) {
         diagLog(`[IconRequest] Theme icon for ${filePath}`);
         return rememberFileIcon(filePath, dataUrl);

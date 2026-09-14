@@ -843,7 +843,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           onChange: (value) => update('language', value as UIConfig['language']),
         },
         {
-          key: 'openAtLogin', configKey: 'openAtLogin', group: 'Startup', title: 'Start with Windows',
+          key: 'openAtLogin', configKey: 'openAtLogin', group: 'Startup',
+          title: navigator.userAgent.includes('Linux') ? 'Launch at startup' : 'Start with Windows',
           description: 'Rovyl is ready as soon as you sign in to Windows.',
           kind: 'bool', enabled: Boolean(config.openAtLogin),
           onToggle: () => {
