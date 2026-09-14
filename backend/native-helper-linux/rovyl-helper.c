@@ -867,7 +867,7 @@ static void scan_input_devices(const char *name_filter) {
     }
     char name[96] = "";
     ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
-    if (strncmp(name, NAME_PREFIX, strlen(NAME_PREFIX)) == 0) { close(fd); continue; }
+    if (strncmp(name, "rovyl-", 6) == 0) { close(fd); continue; }
 
     if (is_mouse_device(fd)) {
       if (source_count >= MAX_DEVICES) { close(fd); continue; }

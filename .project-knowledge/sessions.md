@@ -11,3 +11,4 @@
 | 2026-09-14 | First real-grab attempt froze the pointer (REL forwarded as EV_KEY); fixed, added REL assertions to the E2E suite, app relaunched on Wayland with the corrected helper — gesture live for acceptance testing |
 | 2026-09-14 | UX fixes from live testing: BLOCK_CLICK (click-away closes wheel/panel, via helper→main→renderer), unified the click/hold boundary at 1 s (helper threshold was 400 ms so slower menu clicks landed in apps). FirstRun overlay pinned to viewport. All verified with the virtual-device rig |
 | 2026-09-14 | Helper-respawn self-healing added after my test cleanup killed the live helper (menu dead, log silent). Exit handler → requestBlockerRespawn → re-arm; kill-and-respawn verified live |
+| 2026-09-14 | Autoscroll root cause: KDE per-device setting on the forwarded pointer (user fixed by enabling it there). Cleaned leaked test devices; helper now skips all rovyl-* named devices |
