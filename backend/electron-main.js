@@ -1285,6 +1285,18 @@ async function createWindow() {
         resolve(newWindow);
       }, 200);
     });
+    /** A window that never gets its first frame stalls the whole boot chain silently — name the suspect. */
+    setTimeout(() => {
+      try {
+        if (!newWindow.isVisible() && !mainWindow?.isVisible()) {
+          diagLog(
+            "[BOOT] ready-to-show has not fired 20s after load — the compositor is not producing frames. "
+            + "Known causes on Linux: software rendering under Wayland (remove ZENITH_DISABLE_HARDWARE_ACCELERATION), "
+            + "or a NVIDIA kernel/userspace version mismatch (reboot after driver updates).",
+          );
+        }
+      } catch (_) {}
+    }, 20000).unref?.();
 
     // Track bounds for persistence — only in `windowed` mode (fullscreen/small use special bounds; small+island must not overwrite the last real size).
     newWindow.on("resize", () => {
