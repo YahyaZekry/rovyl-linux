@@ -1,6 +1,6 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-09-18
+> Last updated: 2026-09-18 (CI landed)
 > Status: Active
 > Stack: Electron 28 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
 > Current goal: Linux/Wayland port user-verified end-to-end; remaining: CI workflows, deb polish, Windows regression pass, repo rename

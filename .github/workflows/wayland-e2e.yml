@@ -1,0 +1,109 @@
+name: Wayland E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *' # nightly
+  pull_request:
+    paths:
+      - 'backend/native-helper-linux/**'
+      - 'scripts/e2e/**'
+
+jobs:
+  # The gesture state machine, verified against a virtual input device. No display server
+  # needed — the helper works at the kernel layer. This is the regression net for the
+  # click/hold/BLOCK semantics.
+  helper-gesture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential libx11-dev libxtst-dev
+
+      - name: Enable uinput + open event nodes to the runner user
+        run: |
+          sudo modprobe uinput || true
+          sudo gpasswd -a "$USER" input || true
+          sudo chmod 0666 /dev/uinput 2>/dev/null || true
+          echo 'ACTION=="add", KERNEL=="event[0-9]*", MODE="0666"' | \
+            sudo tee /etc/udev/rules.d/99-ci-event-nodes.rules
+          sudo udevadm control --reload
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (renderer + native helper)
+        run: npm run build
+
+      - name: Gesture scenarios (click / hold / drag / BLOCK)
+        run: scripts/e2e/run-gesture-e2e.sh
+
+  # Experimental: boot the full app under headless sway and drive a gesture through the
+  # compositor. Informative while it settles — not a merge gate.
+  app-headless-sway:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Compositor + capture tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libx11-dev libxtst-dev sway grim xz-utils
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Start headless sway
+        run: |
+          export XDG_RUNTIME_DIR=/tmp/xdg
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
+            sway -c /dev/null > /tmp/sway.log 2>&1 &
+          for i in $(seq 1 20); do
+            SOCK=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep wayland | head -1)
+            [ -n "$SOCK" ] && break
+            sleep 0.5
+          done
+          [ -n "$SOCK" ] || { echo "no wayland socket"; exit 1; }
+          echo "WAYLAND_DISPLAY=$SOCK" >> "$GITHUB_ENV"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+
+      - name: Launch Rovyl
+        run: |
+          ELECTRON_OZONE_PLATFORM_HINT=auto ELECTRON_DISABLE_SANDBOX=1 \
+          nohup npx electron . > /tmp/rovyl.log 2>&1 &
+          sleep 15
+          pgrep -f "electron ." >/dev/null || { echo "app died"; exit 1; }
+
+      - name: Capture evidence
+        if: always()
+        run: |
+          mkdir -p evidence
+          WAYLAND_DISPLAY="$WAYLAND_DISPLAY" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+            grim evidence/idle.png 2>/dev/null || true
+          grep -a "trigger captured\|Main window ready" ~/.zenith-radial-menu/diagnostic.log | tail -5 > evidence/diag.txt || true
+          cp /tmp/rovyl.log evidence/ 2>/dev/null || true
+          cp /tmp/sway.log evidence/ 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sway-e2e-evidence
+          path: evidence/
+          if-no-files-found: ignore

@@ -1,0 +1,116 @@
+name: Linux builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian-12
+            image: debian:12
+          - distro: debian-13
+            image: debian:13
+          - distro: ubuntu-22.04
+            image: ubuntu:22.04
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+    name: deb (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+      options: --security-opt seccomp=unconfined
+    steps:
+      - name: Toolchain
+        run: |
+          apt-get update
+          apt-get install -y curl git build-essential libx11-dev libxtst-dev xz-utils
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (renderer + native helper)
+        run: npm run build
+
+      - name: Package deb
+        run: npx electron-builder --linux deb --publish never
+
+      - name: Verify package contents
+        run: |
+          test -f "build-out/Rovyl-"*.deb
+          dpkg-deb -x build-out/Rovyl-*.deb /tmp/pkgcheck
+          test -x /tmp/pkgcheck/opt/Rovyl/rovyl
+          test -x "/tmp/pkgcheck/opt/Rovyl/resources/app.asar.unpacked/backend/rovyl-helper-linux"
+          test -f /tmp/pkgcheck/usr/share/applications/rovyl.desktop
+          echo "deb layout OK"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rovyl-deb-${{ matrix.distro }}
+          path: build-out/Rovyl-*.deb
+          if-no-files-found: error
+
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential libx11-dev libxtst-dev
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package AppImage
+        run: npx electron-builder --linux AppImage --publish never
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rovyl-AppImage
+          path: build-out/Rovyl-*.AppImage
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [deb, appimage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist-artifacts
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-artifacts/*
+          generate_release_notes: true
