@@ -843,6 +843,17 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           onChange: (value) => update('language', value as UIConfig['language']),
         },
         {
+          key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu', group: 'Activation',
+          title: 'Menu on middle click over apps',
+          description: navigator.userAgent.includes('Linux')
+            ? 'On: a quick middle click opens the menu AND does the native action (known quirk). Off: middle click stays 100% native everywhere — open the menu with the hotkey instead.'
+            : 'A quick middle click opens the menu.',
+          kind: 'bool', enabled: config.middleClickOpensMenu !== false,
+          onToggle: () => {
+            update('middleClickOpensMenu', !(config.middleClickOpensMenu !== false));
+          },
+        },
+        {
           key: 'openAtLogin', configKey: 'openAtLogin', group: 'Startup',
           title: navigator.userAgent.includes('Linux') ? 'Launch at startup' : 'Start with Windows',
           description: 'Rovyl is ready as soon as you sign in to Windows.',

@@ -222,6 +222,8 @@ export interface UIConfig {
   radialInstantSensitivity?: 'low' | 'medium' | 'high';
   openAtLogin?: boolean; // New: Start app at login
   enableMouseTrigger: boolean;
+  /** When false, a middle click stays 100% native everywhere — the menu never opens from it. */
+  middleClickOpensMenu?: boolean;
   /** click: an MMB click opens and leaves the radial open; hold: holding opens, releasing runs the selection. */
   mouseTriggerMode?: 'click' | 'hold';
   /** toggle: pressing shortcut opens/closes; hold: holding shortcut opens, releasing runs selection or closes. */

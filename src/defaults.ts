@@ -276,6 +276,7 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   radialInstantDwellMs: 400,
   radialInstantSensitivity: 'medium',
   enableMouseTrigger: true,
+  middleClickOpensMenu: true,
   mouseTriggerMode: 'click',
   mouseTriggerButton: 'middle',
   shortcutTriggerMode: 'toggle',

@@ -2,224 +2,118 @@
 
 <img src="docs/media/banner.png" alt="" width="720">
 
-# Rovyl
+# Rovyl for Linux
 
 **One gesture. Any destination.**
 
-A radial launcher for Windows and Linux. Hold the middle mouse button anywhere, aim, release.
+A radial launcher for Linux. Hold the middle mouse button, aim, release — over Wayland and X11.
 
-[![Download Rovyl for Windows](https://img.shields.io/badge/Download%20for%20Windows-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/arshit09/rovyl/releases/latest)
-
-![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Linux-0078d4?style=flat-square)
-![Linux](https://img.shields.io/badge/Linux-Wayland%20%7C%20X11-fcc624?style=flat-square&logo=linux&logoColor=black)
+![Platform](https://img.shields.io/badge/platform-Linux-fcc624?style=flat-square&logo=linux&logoColor=black)
+![Tested on](https://img.shields.io/badge/tested%20on-KDE%20Plasma%206%20%7C%20Wayland-1d99f3?style=flat-square)
 ![Electron](https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white)
-![React](https://img.shields.io/badge/React-18-149eca?style=flat-square&logo=react&logoColor=white)
 
 </div>
 
 ---
 
-## Why
+## What it is
 
-Every launcher asks you to stop what you are doing. Open a window, type a few letters,
-read a list, pick a row. It is fast, but it is still an interruption — and your hand
-leaves the mouse.
+Hold a mouse button and a wheel of your shortcuts blooms on screen. Move toward what you
+want, release — apps, folders, files, websites, commands. No window between you and your
+work.
 
-Rovyl takes a different bet: **you already know where your things are.** Hold the middle
-mouse button and a wheel blooms in the middle of your screen. Move toward what you want.
-Release. The whole thing takes less than a second, happens wherever you already were, and
-never puts a window between you and your work.
+This is a Linux port of [Rovyl](https://github.com/HenryCauan/rovyl) (originally Windows),
+rebuilt for Wayland: the gesture engine is a small C helper that talks to your input
+devices directly (evdev) and re-injects events through a virtual pointer, so it works on
+KDE Plasma, wlroots compositors (sway, Hyprland, …) and X11 alike. No compositor plugins.
 
-<div align="center">
-<img src="docs/media/wheel.png" alt="The Rovyl wheel open over the desktop" width="620">
-</div>
+## Tested on
 
-## Features
-
-- **Opens over anything** — any window, including fullscreen apps (fullscreen coverage on Wayland is planned; see the Linux notes)
-- **Your monitor** — always the main screen, or the one your pointer is already on
-- **Launch anything** — applications, folders, files, websites, custom commands
-- **Automatic discovery** — reads your Start Menu (Windows) or your installed applications (Linux) and extracts real app icons
-- **Workspaces** — separate wheels for work, games, streaming; switch with a number key
-- **Your trigger** — middle mouse button, a side button, or a global hotkey
-- **Two aiming modes** — by direction for speed, or by pointer for precision
-- **Launch without clicking** — optional: hides the pointer, picks by direction, and opens on its own
-- **Focus protection** — stays out of the way while you are in a fullscreen game
-- **Fully offline** — no account, no telemetry, no ads, nothing leaves your machine
+| | |
+|---|---|
+| **Primary** | Arch-based (Garuda) · KDE Plasma 6 · Wayland · NVIDIA (open kernel module) |
+| **Expected to work** | Any Wayland compositor, X11 sessions, Electron-supported distros |
+| **Electron** | 44 (native Wayland) |
 
 ## Install
 
-<div align="center">
+**AppImage** (any distro):
 
-[![Download Rovyl for Windows](https://img.shields.io/badge/Download%20for%20Windows-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/arshit09/rovyl/releases/latest)
+```bash
+# from a release, or build it yourself (see Building)
+chmod +x Rovyl-*.AppImage
+./Rovyl-*.AppImage
+```
 
-**Windows 10 and 11 — free, no account, nothing to sign up for.**
+**Deb** (Debian 12/13, Ubuntu 22.04/24.04):
 
-</div>
+```bash
+sudo dpkg -i Rovyl-*.deb
+```
 
-The button opens the latest release on GitHub. Never downloaded from there? It is four
-steps:
+**Permissions** — the gesture helper reads your mouse at the kernel level. Add your user
+to the `input` group (the deb does this for you; otherwise `sudo usermod -aG input $USER`
+and log back in).
 
-1. Under **Assets**, click the file ending in **`.exe`**. It saves to your `Downloads`
-   folder like any other file.
-2. Open it — from your browser's download bar, or by double-clicking it in `Downloads`.
-3. Windows shows a blue **"Windows protected your PC"** screen, because this installer is
-   not signed. Click **More info**, then **Run anyway**.
-4. Follow the installer. Rovyl then lives in your system tray and updates itself from this
-   repository, so this is the only manual download you need.
+**Hardened kernels** — if the window never appears, your kernel blocks Electron's
+sandbox: launch with `ELECTRON_DISABLE_SANDBOX=1`.
 
-**From source** — see [Building](#building) below.
+## Middle click behaviour — read this
 
-### Linux
+One physical button can't be both "native middle click" and "open the menu", so:
 
-Linux support is new in this fork and is **Wayland-first** — the gesture works on native
-Wayland (KDE Plasma 6, wlroots compositors) as well as X11, with no XWayland requirement.
+- **A quick middle click does the native thing** (closes a browser tab, opens a link in a
+  new tab) **and** opens the menu. Both. That's the current behaviour; the menu appearing
+  is the known quirk.
+- **Holding it past a second** hands the button to the app — that's autoscroll, if your
+  browser/desktop has it enabled for the `rovyl-fwd-…` device.
+- **Launch at startup** (Settings → Startup) writes a real XDG autostart entry on Linux.
 
-- **Packages** — `npm run dist` builds a `.deb` (Debian 12/13, Ubuntu 22.04/24.04) and an
-  `.AppImage` (self-updating).
-- **Permissions** — the gesture helper reads your mouse at the kernel level and re-injects
-  events through a virtual device, so your user needs to be in the `input` group
-  (`sudo usermod -aG input $USER`, then log out and back in). The deb sets this up.
-- **Session type** — on Wayland the helper uses evdev + uinput; on X11 it uses X11 grabs.
-  Neither needs a compositor plugin.
-- **After first launch**: your pointer now flows through a Rovyl virtual device, which your
-  desktop treats as **its own mouse entry** — in KDE's mouse settings, pick the
-  `rovyl-fwd-…` device and match its pointer speed to your physical mouse, and enable
-  **"Hold down middle button and move mouse to scroll"** on it if you want autoscroll on
-  long middle-holds. Short middle clicks pass through to apps as usual.
-- **Hardened kernels** — if the window never appears, your kernel may block Electron's
-  sandbox; launch with `ELECTRON_DISABLE_SANDBOX=1`. Do **not** set
-  `ZENITH_DISABLE_HARDWARE_ACCELERATION=1` on Wayland — software rendering cannot produce
-  the transparent window's first frame and the app stalls at startup.
-- **Known gaps on Wayland** — the wheel opens centred on the chosen monitor (not at the
-  cursor), it cannot cover fullscreen games, and exact pointer warping (the clickless
-  execution mode) is unavailable. See [docs/wayland-port-plan.md](docs/wayland-port-plan.md)
-  for the full capability matrix and what's planned.
+Full control lives in **Settings → Activation**: trigger button, mode, hotkey. If the
+double-behaviour bothers you, switch the trigger to a side button or the hotkey and your
+middle button stays 100% native.
 
-## How it works
+## Known limitations on Wayland
 
-<table>
-<tr>
-<td width="50%" valign="top">
+- **The wheel opens centred on the screen**, not at the cursor — Wayland gives an app no
+  global cursor position. ("Follow pointer" currently behaves like "main screen".)
+- **A taskbar entry appears while the wheel is open** — Wayland has no skip-taskbar
+  protocol for normal windows. It disappears when the wheel closes.
+- **It does not appear over fullscreen games** (planned: layer-shell overlay).
+- **Autoscroll** needs the KDE per-device toggle enabled for the `rovyl-fwd-…` pointer
+  (System Settings → Mouse → pick the Rovyl device). Its pointer speed is also tuned
+  separately from your physical mouse.
+- **No pointer warping** — the "open without clicking" (dwell) cursor parking is
+  unavailable.
 
-**Hold**
-
-Press and hold the middle mouse button anywhere in Windows. The wheel appears centred on
-your screen — one throw in any direction reaches every shortcut. Two monitors? Activation →
-**Monitor** picks between **Main screen** and **Follow pointer**.
-
-</td>
-<td width="50%" valign="top">
-
-**Aim**
-
-Move toward the shortcut you want. In direction mode the slice you point at lights up from
-anywhere on screen; in pointer mode only the icon under the cursor does.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**Release**
-
-The target opens and the wheel disappears. Release in the centre, or press Escape, to
-cancel without launching anything.
-
-</td>
-<td valign="top">
-
-**Switch**
-
-Number keys move between workspaces while the wheel is open, or use the picker in the hub.
-
-</td>
-</tr>
-</table>
-
-## Screenshots
-
-<div align="center">
-<img src="docs/media/workspaces.png" alt="Workspace cards, each previewing its own wheel" width="440">
-<img src="docs/media/settings.png" alt="Activation settings" width="440">
-</div>
+See **[docs/wayland-port-plan.md](docs/wayland-port-plan.md)** for why each of these is
+the way it is, and what's planned.
 
 ## Building
 
-Requires **Node 20+**. On Linux you also need `build-essential`, `libx11-dev` and
-`libxtst-dev` for the native gesture helper (`gcc` compiles it automatically as part of
-the build).
+Requires **Node 20+** and, on Linux, `build-essential libx11-dev libxtst-dev` (the C
+gesture helper compiles as part of the build).
 
 ```bash
 git clone https://github.com/YahyaZekry/rovyl
 cd rovyl
 npm install
-npm start
+npm run dist      # AppImage + deb in build-out/
+npm start         # dev server + Electron
 ```
 
-Platform targets: `npm run dist` produces an NSIS installer on Windows and a `.deb` /
-`.AppImage` on Linux. The native helper builds per platform
-(`rovyl-helper.exe` from C# on Windows, `rovyl-helper-linux` from C on Linux) and speaks
-the same line protocol to the main process. Note that the jump to Electron 44 happened on
-Linux; a Windows regression pass is still pending — see
-[.project-knowledge/roadmap.md](.project-knowledge/roadmap.md).
+Google sign-in (licensing) needs your own OAuth credentials — copy `.env.example` to
+`.env.local`.
 
-`npm start` brings up Vite and waits for it before launching Electron. To run the halves
-separately, use `npm run dev` and `npm run electron`.
+## Credits & licence
 
-Google sign-in needs credentials of your own — copy `.env.example` to `.env.local` and
-fill in a client ID from your own Google Cloud project. There is deliberately no default,
-so a fork never inherits someone else's OAuth client.
+Linux port of **[Rovyl](https://github.com/HenryCauan/rovyl)** by Henry Cauan (upstream
+active at [arshit09/rovyl](https://github.com/arshit09/rovyl)). All the good
+architecture is theirs; the Wayland parts are documented in
+[docs/wayland-port-plan.md](docs/wayland-port-plan.md) and
+[.project-knowledge/](.project-knowledge/).
 
-> The dev app and the packaged app share `%APPDATA%\Rovyl`, because Electron derives it
-> from `productName`. A dev session therefore reads and writes your real configuration.
-> Pass `--user-data-dir` to work against a clean profile.
-
-<details>
-<summary><b>All scripts</b></summary>
-
-| Command | What it does |
-| --- | --- |
-| `npm start` | Dev server + Electron |
-| `npm run dev` | Vite only |
-| `npm run electron` | Electron only, waits for port 5173 |
-| `npm run build` | `tsc` → Vite build → radial verification → icon generation |
-| `npm run dist` | `build` + electron-builder, installer in `build-out/` |
-| `npm run dist:store` | `build` + electron-builder, MSIX package for the Store |
-| `npm run verify:radial-windowing` | Checks the radial handshake invariants |
-| `npm run test:win32-launch` | Command parsing and quoting |
-| `npm run test:persistence-shape` | Persistence blob normalisation |
-
-</details>
-
-## Contributing
-
-Issues and pull requests are welcome. Before changing anything that looks arbitrary, read
-**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — most of it exists because something
-broke, and the reason is written down.
-
-Two things worth knowing up front: the code comments are in Portuguese and explain *why*
-rather than *what*, and `npm run build` runs a verification script that enforces the
-window-handshake invariants. If it fails, the handshake was broken, not the test.
-
-## Links
-
-- **Download** — [latest release](https://github.com/arshit09/rovyl/releases/latest)
-- **Website and docs** — [rovyl-red.vercel.app](https://rovyl-red.vercel.app)
-- **All releases** — [github.com/arshit09/rovyl/releases](https://github.com/arshit09/rovyl/releases)
-- **Upstream** — [HenryCauan/rovyl](https://github.com/HenryCauan/rovyl)
-- **Privacy policy** — [rovyl-red.vercel.app/privacy](https://rovyl-red.vercel.app/privacy)
-
-## License
-
-Copyright © 2026 Henry Cauan.
-
-Rovyl is free software, licensed under the **GNU General Public License v3.0** — see
-[LICENSE](LICENSE). You may use, study, modify and share it. If you distribute a modified
-version, you have to release its source under the same licence.
-
-The copyright holder is not bound by that outbound licence, so the build sold on the
-Microsoft Store is distributed under Microsoft's standard terms. Both are the same code.
+Licensed under the **GNU GPL v3.0** — see [LICENSE](LICENSE).
 
 ---
 
