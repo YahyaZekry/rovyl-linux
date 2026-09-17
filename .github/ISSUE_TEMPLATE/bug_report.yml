@@ -1,0 +1,58 @@
+name: Bug report
+description: Something broke. The diagnostic log makes these fixable.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Hold middle button over …
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Wheel / gesture (open, aim, launch)
+        - Launching apps or files
+        - Icons
+        - Settings window
+        - Autostart / tray
+        - Packaging / install
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distro + desktop
+      placeholder: "Arch · KDE Plasma 6 · Wayland"
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: Install type
+      placeholder: "AppImage / deb / built from source"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostic log
+      description: Attach `~/.zenith-radial-menu/diagnostic.log` (the tail is usually enough).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I am in the `input` group
+        - label: The window opens and the wheel appears

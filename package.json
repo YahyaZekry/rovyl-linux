@@ -43,7 +43,8 @@
     "verify:renderer-budget": "node scripts/verify-renderer-budget.mjs",
     "release": "node scripts/release.mjs",
     "release:check": "node scripts/release.mjs --check",
-    "dist:store": "npm run build && node scripts/run-electron-builder.mjs --win appx --publish never"
+    "dist:store": "npm run build && node scripts/run-electron-builder.mjs --win appx --publish never",
+    "test:gesture": "scripts/e2e/run-gesture-e2e.sh"
   },
   "_comment_dependencies": "Runtime only. electron-builder bundles the whole production closure into app.asar, so anything the main process does not require() belongs in devDependencies \u2014 Vite compiles the renderer's imports into dist/ and the packages themselves never ship.",
   "dependencies": {

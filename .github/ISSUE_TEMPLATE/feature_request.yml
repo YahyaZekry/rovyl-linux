@@ -1,0 +1,21 @@
+name: Feature request
+description: Something you want the wheel to do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should it do?
+      description: What you want, and what you'd use it for.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you use today
+  - type: checkboxes
+    id: wayland
+    attributes:
+      label: Wayland note
+      options:
+        - label: I understand Wayland has hard limits (no cursor position outside the app, no taskbar hiding, no fullscreen overlay) — see the README's Known limitations.

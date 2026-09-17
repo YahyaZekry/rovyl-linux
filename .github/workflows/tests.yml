@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build prerequisites (gcc + X11 headers for the gesture helper)
+        run: sudo apt-get update && sudo apt-get install -y build-essential libx11-dev libxtst-dev
+
+      - name: Syntax checks (main process)
+        run: |
+          node --check backend/electron-main.js
+          node --check backend/electron-preload.js
+          node --check backend/linux-desktop.cjs
+
+      - name: Native helper (strict warnings)
+        run: gcc -O2 -Wall -Wextra -o /tmp/rovyl-helper-check backend/native-helper-linux/rovyl-helper.c -lX11 -lXtst
+
+      - name: Renderer + helper build (runs the handshake and bundle verifiers)
+        run: npm run build
+
+      - name: Smoke suite
+        run: |
+          set -e
+          for t in tray-menu radial-filter backdrop-dim taskbar-overlay icon-store \
+                   persistence-mirror i18n select-menu keyboard-nav page-title \
+                   fullscreen-bounds foreground-snapshot launch-result launch-failure \
+                   file-shortcut persistence-normalize icon-map start-app-launch; do
+            node "scripts/$t-smoke.mjs"
+          done
+          node --test backend/win32-launch.test.cjs backend/game-detection.test.cjs
