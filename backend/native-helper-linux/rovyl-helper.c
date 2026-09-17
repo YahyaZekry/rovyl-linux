@@ -62,6 +62,7 @@
 #define MOD_SUPER 8
 
 #define PASSTHROUGH_MAX_MS 250
+#define PASSTHROUGH_DELAY_MS 250
 #define DEFAULT_CLICK_HOLD_MS 400
 #define DEFAULT_CLICK_DRAG_PX 30
 
@@ -176,6 +177,10 @@ static int shortcut_active;
 static int trigger_held, click_press_armed, click_injected_button;
 static int down_x, down_y;
 static long long down_at;
+/* Click mode: a held-back quick click, cancelled by CLICK_CONSUMED when the menu absorbs it. */
+static int x11_pending_passthrough;
+static int x11_pending_button;
+static long long x11_pending_at;
 
 /*
  * Synthetic events we are expecting: the passive grabs fire on our own XTest presses too
@@ -256,6 +261,7 @@ static void handle_button_press(int button, int x, int y) {
   }
 
   if (trigger_button_vk && button == vk_to_button(trigger_button_vk) && !trigger_held) {
+    x11_pending_passthrough = 0; /* a new gesture supersedes a held-back click */
     trigger_held = 1;
     down_x = x;
     down_y = y;
@@ -309,7 +315,9 @@ static void handle_button_release(int button, int x, int y) {
         emit("TRIGGER_HOLD");
       } else {
         emit("TRIGGER_UP");
-        passthrough_click(button);
+        x11_pending_passthrough = 1;
+        x11_pending_button = button;
+        x11_pending_at = now_ms() + PASSTHROUGH_DELAY_MS;
       }
     }
     XAllowEvents(dpy, AsyncPointer, CurrentTime);
@@ -454,6 +462,8 @@ static void apply_command(char *line) {
   } else if (n == 3 && strcmp(parts[0], "WARP") == 0) {
     XWarpPointer(dpy, None, root, 0, 0, 0, 0, atoi(parts[1]), atoi(parts[2]));
     XFlush(dpy);
+  } else if (strcmp(parts[0], "CLICK_CONSUMED") == 0) {
+    x11_pending_passthrough = 0; /* main opened the menu: the click is absorbed by the wheel */
   } else if (strcmp(parts[0], "EXIT") == 0) {
     exit(0);
   }
@@ -474,6 +484,7 @@ static void run_mouse_blocker(void) {
     int maxfd = xfd > 0 ? xfd : 0;
     /* 15 ms tick while a click-mode press is held, otherwise sleep on the sockets. */
     struct timeval tv = {0, 15000}, *tvp = trigger_held && !trigger_hold_mode ? &tv : NULL;
+    if (!tvp && x11_pending_passthrough) tvp = &tv;
     int ready = select(maxfd + 1, &fds, NULL, NULL, tvp);
     if (ready < 0 && errno != EINTR) break;
     if (ready > 0 && FD_ISSET(0, &fds)) {
@@ -508,6 +519,12 @@ static void run_mouse_blocker(void) {
           XAllowEvents(dpy, AsyncPointer, CurrentTime);
         }
       }
+      XFlush(dpy);
+    }
+    if (x11_pending_passthrough && now_ms() >= x11_pending_at) {
+      x11_pending_passthrough = 0;
+      XTestFakeButtonEvent(dpy, x11_pending_button, True, CurrentTime);
+      XTestFakeButtonEvent(dpy, x11_pending_button, False, CurrentTime);
       XFlush(dpy);
     }
     poll_click_hold();
@@ -954,6 +971,17 @@ static volatile int ev_record_mode;
 static int ev_shortcut_vk, ev_shortcut_mod_mask, ev_shortcut_active;
 static int ev_mod_mask;
 
+/*
+ * Click mode hands a quick press back AFTER main has decided: a menu opening absorbs the click
+ * (main cancels it with CLICK_CONSUMED), a refused one lands in the app 250 ms later. The old
+ * inject-at-release raced the wheel's own reveal and fired both.
+ */
+#define PASSTHROUGH_DELAY_MS 250
+static int ev_pending_passthrough;
+static struct ev_source *ev_pending_src;
+static unsigned int ev_pending_btn;
+static long long ev_pending_at;
+
 static int ev_point_in(int x, int y, int l, int t, int r, int b) {
   return x >= l && x < r && y >= t && y < b;
 }
@@ -994,6 +1022,7 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
 
   if (ev_trigger_vk && vk == ev_trigger_vk) {
     if (press && !ev_trigger_held) {
+      ev_pending_passthrough = 0; /* a new gesture supersedes a held-back click */
       ev_trigger_held = 1;
       ev_trigger_src = src;
       ev_down_at = evdev_now_ms();
@@ -1025,8 +1054,10 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
         emit("TRIGGER_HOLD");
       } else {
         emit("TRIGGER_UP");
-        inject_button(src, code, 1);
-        inject_button(src, code, 0);
+        ev_pending_passthrough = 1;
+        ev_pending_src = src;
+        ev_pending_btn = code;
+        ev_pending_at = evdev_now_ms() + PASSTHROUGH_DELAY_MS;
       }
       return;
     }
@@ -1098,6 +1129,8 @@ static void ev_apply_command(char *line) {
     ev_blocking = 1;
   } else if (strcmp(parts[0], "UNBLOCK") == 0) {
     ev_blocking = 0;
+  } else if (strcmp(parts[0], "CLICK_CONSUMED") == 0) {
+    ev_pending_passthrough = 0; /* main opened the menu: the click is absorbed by the wheel */
   } else if (strcmp(parts[0], "POS") == 0 && n == 3) {
     ev_last_x = atoi(parts[1]);
     ev_last_y = atoi(parts[2]);
@@ -1201,7 +1234,8 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
      * appear before they are readable — a periodic poll is simple and never misses.
      */
     struct timeval tv = {1, 0}, *tvp = &tv;
-    if (ev_trigger_held && !ev_trigger_hold_mode) { tv.tv_sec = 0; tv.tv_usec = 15000; }
+    if (ev_pending_passthrough) { tv.tv_sec = 0; tv.tv_usec = 15000; }
+    else if (ev_trigger_held && !ev_trigger_hold_mode) { tv.tv_sec = 0; tv.tv_usec = 15000; }
     int ready = select(maxfd + 1, &fds, NULL, NULL, tvp);
     if (ready < 0 && errno != EINTR) break;
 
@@ -1260,6 +1294,11 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
       ev_blocking = 0;
       fprintf(stderr, "rovyl-helper-linux: no session heartbeat for %d ms while blocking — auto-unblocked\n",
               BLOCK_WATCHDOG_MS);
+    }
+    if (ev_pending_passthrough && evdev_now_ms() >= ev_pending_at) {
+      ev_pending_passthrough = 0;
+      inject_button(ev_pending_src, ev_pending_btn, 1);
+      inject_button(ev_pending_src, ev_pending_btn, 0);
     }
     ev_poll_click_hold();
   }
