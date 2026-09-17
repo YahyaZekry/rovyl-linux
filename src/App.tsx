@@ -1683,9 +1683,6 @@ export default function App() {
       paintToken?: number;
     },
   ) => {
-  /** The helper's held-back click may land right after the reveal — absorb it. */
-  radialClickShieldUntilRef.current = Date.now() + 400;
-
     const triggerGeneration = ++radialTriggerGenerationRef.current;
     /**
      * Radial over the panel: there is only one window, so opening the radial shrank it to the

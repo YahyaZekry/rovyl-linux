@@ -6532,12 +6532,6 @@ app.whenReady().then(async () => {
              * eating the next gesture's release.
              */
             if (!allowed || mmbHoldGestureId !== gestureId) continue;
-            /**
-             * The helper held the quick click back for exactly this window: the menu absorbs it
-             * (CLICK_CONSUMED cancels the injection, and the wheel's own post-open shield eats the
-             * late click if it still lands), while a refused gesture still delivers it to the app.
-             */
-            writeRadialMouseBlocker("CLICK_CONSUMED");
             showMenuAtCursor("mmb-click");
             continue;
           }
