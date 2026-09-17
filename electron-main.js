@@ -6298,7 +6298,6 @@ app.whenReady().then(async () => {
    * loose: it catches an absurd press that reached here anyway, and nothing else.
    */
   const MMB_CLICK_BACKSTOP_MS = 1000;
-  const MMB_MENU_MIN_MS = 350;
   let mmbHoldOpenTimer = null;
   let mmbIsDown = false;
   /** Invalidates an async check if the button is released or a newer gesture appears. */
@@ -6402,12 +6401,6 @@ app.whenReady().then(async () => {
       MMB_CLICK_BACKSTOP_MS,
       MMB_CLICK_DRAG_PX,
     );
-    /**
-     * Fast releases (under this floor) are pure native clicks — the helper hands them back at
-     * once and main never opens the menu for them. Between the floor and the backstop sits the
-     * deliberate press that means "menu"; past the backstop the app gets its button (autoscroll).
-     */
-    writeRadialMouseBlocker(`CLICKMAX ${MMB_MENU_MIN_MS}`);
 
     handleTriggerData = async (data) => {
       const lines = data.toString().split(/\r?\n/);
@@ -6522,11 +6515,6 @@ app.whenReady().then(async () => {
              * `mmbClickDownAt`, so that orphan release no longer opens anything.
              */
             const heldMs = downAt ? Date.now() - downAt : Number.POSITIVE_INFINITY;
-            if (heldMs < MMB_MENU_MIN_MS) {
-              /** A fast native click — the helper already handed it back untouched. */
-              mmbClickDownAt = 0;
-              continue;
-            }
             if (heldMs > MMB_CLICK_BACKSTOP_MS) {
               /** This one's only failure mode is a click refused in silence: it goes in the log. */
               diagLog(
@@ -6544,12 +6532,6 @@ app.whenReady().then(async () => {
              * eating the next gesture's release.
              */
             if (!allowed || mmbHoldGestureId !== gestureId) continue;
-            /**
-             * The helper held the quick click back for exactly this window: the menu absorbs it
-             * (CLICK_CONSUMED cancels the injection, and the wheel's own post-open shield eats the
-             * late click if it still lands), while a refused gesture still delivers it to the app.
-             */
-            writeRadialMouseBlocker("CLICK_CONSUMED");
             showMenuAtCursor("mmb-click");
             continue;
           }

@@ -181,6 +181,7 @@ static long long down_at;
 static int x11_pending_passthrough;
 static int x11_pending_button;
 static long long x11_pending_at;
+static int x11_click_max_ms;
 
 /*
  * Synthetic events we are expecting: the passive grabs fire on our own XTest presses too
@@ -313,6 +314,9 @@ static void handle_button_release(int button, int x, int y) {
       } else if (!armed || held >= click_hold_ms ||
                  (dx * dx + dy * dy) >= click_drag_px * click_drag_px) {
         emit("TRIGGER_HOLD");
+      } else if (x11_click_max_ms && held < x11_click_max_ms) {
+        emit("TRIGGER_UP");
+        passthrough_click(button); /* fast native click: no menu */
       } else {
         emit("TRIGGER_UP");
         x11_pending_passthrough = 1;
@@ -462,6 +466,10 @@ static void apply_command(char *line) {
   } else if (n == 3 && strcmp(parts[0], "WARP") == 0) {
     XWarpPointer(dpy, None, root, 0, 0, 0, 0, atoi(parts[1]), atoi(parts[2]));
     XFlush(dpy);
+  } else if (strcmp(parts[0], "CLICKMAX") == 0 && n == 2) {
+    ev_click_max_ms = atoi(parts[1]);
+  } else if (strcmp(parts[0], "CLICKMAX") == 0 && n == 2) {
+    x11_click_max_ms = atoi(parts[1]);
   } else if (strcmp(parts[0], "CLICK_CONSUMED") == 0) {
     x11_pending_passthrough = 0; /* main opened the menu: the click is absorbed by the wheel */
   } else if (strcmp(parts[0], "EXIT") == 0) {
@@ -946,6 +954,7 @@ static int ev_trigger_vk;                 /* 0 = off */
 static int ev_trigger_hold_mode;
 static int ev_trigger_threshold;
 static int ev_click_hold_ms = DEFAULT_CLICK_HOLD_MS;
+static int ev_click_max_ms;            /* releases faster than this are pure native clicks (no menu) */
 static int ev_click_drag_px = DEFAULT_CLICK_DRAG_PX;
 
 static int ev_trigger_held;
@@ -1052,7 +1061,13 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
       } else if (!ev_click_press_armed || held >= ev_click_hold_ms ||
                  dist2 >= (long long)ev_click_drag_px * ev_click_drag_px) {
         emit("TRIGGER_HOLD");
+      } else if (ev_click_max_ms && held < ev_click_max_ms) {
+        /* fast native click: hand it back at once, main never opens the menu for these */
+        emit("TRIGGER_UP");
+        inject_button(src, code, 1);
+        inject_button(src, code, 0);
       } else {
+        /* slower deliberate press: main gets the say — menu (CLICK_CONSUMED) or native click */
         emit("TRIGGER_UP");
         ev_pending_passthrough = 1;
         ev_pending_src = src;
@@ -1156,7 +1171,7 @@ static void ev_apply_command(char *line) {
       ev_trigger_threshold = threshold > 0 ? threshold : 0;
       ev_click_hold_ms = n >= 5 && atoi(parts[4]) > 0 ? atoi(parts[4]) : DEFAULT_CLICK_HOLD_MS;
       ev_click_drag_px = n >= 6 && atoi(parts[5]) > 0 ? atoi(parts[5]) : DEFAULT_CLICK_DRAG_PX;
-      ev_trigger_vk = vk;
+      ev_click_max_ms = 0;
       emit(source_count > 0 ? "TRIGGER_READY" : "TRIGGER_FAILED");
     }
   } else if (strcmp(parts[0], "RECORD") == 0) {
