@@ -310,6 +310,8 @@ export interface ElectronAPI {
   appSupportsRecents?: (appName: string, appCommand: string) => Promise<boolean>;
   /** A click the gesture helper swallowed outside the wheel/panel — click away closes it. */
   onBlockClick?: (callback: () => void) => () => void;
+  /** Real pointer position while the wheel is open (Wayland has no global cursor query). */
+  wheelCursor?: (x: number | null, y: number | null) => void;
   onOpenMenu: (
     callback: (data: {
       x: number;

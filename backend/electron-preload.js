@@ -34,6 +34,12 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.on("open-menu", listener);
     return () => ipcRenderer.removeListener("open-menu", listener);
   },
+  /**
+   * While the wheel is open on Wayland, the renderer is the only place the real pointer position
+   * exists (Wayland has no global cursor query) — it streams client coords to feed the helper's
+   * `POS`, which BLOCK uses to judge clicks.
+   */
+  wheelCursor: (x, y) => ipcRenderer.send("wheel-cursor", x, y),
   /** A click the gesture helper swallowed outside the wheel/panel: click-away should close it. */
   onBlockClick: (callback) => {
     const listener = () => callback();
