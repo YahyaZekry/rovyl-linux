@@ -2348,9 +2348,17 @@ function ensureRadialMouseBlocker() {
   });
 }
 
+/** Screen-space rect the helper is currently blocking around — origin for renderer cursor coords. */
+let waylandBlockRect = null;
+/** Last renderer-reported cursor position (screen coords); re-sent as the watchdog heartbeat. */
+let lastWheelPos = null;
+
 function setRadialMouseBlocking(bounds, monitorBounds) {
   if (!nativeHelperEnabled()) return;
   ensureRadialMouseBlocker();
+  waylandBlockRect = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+  lastWheelPos = null;
+  diagLog(`[RadialBlocker] BLOCK rect=${bounds.x},${bounds.y} ${bounds.width}x${bounds.height} monitor=${monitorBounds.x},${monitorBounds.y} ${monitorBounds.width}x${monitorBounds.height}`);
   writeRadialMouseBlocker(
     `BLOCK ${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height} ${monitorBounds.x} ${monitorBounds.y} ${monitorBounds.width} ${monitorBounds.height}`,
   );
@@ -2366,15 +2374,17 @@ function setRadialMouseBlocking(bounds, monitorBounds) {
 let waylandPosFeedTimer = null;
 function startWaylandPosFeed() {
   if (!isWaylandNative || waylandPosFeedTimer) return;
+  /** Re-sends the last renderer-reported position: a user holding the mouse still fires no
+   * mousemove, and the helper's watchdog would otherwise read that silence as a dead session. */
   waylandPosFeedTimer = setInterval(() => {
     if (!radialMouseBlocker || !radialMouseBlockerReady || !radialMouseBlocker.stdin?.writable) return;
+    if (!lastWheelPos) return;
     try {
-      const point = screen.getCursorScreenPoint();
-      radialMouseBlocker.stdin.write(`POS ${point.x} ${point.y}\n`);
+      radialMouseBlocker.stdin.write(`POS ${lastWheelPos[0]} ${lastWheelPos[1]}\n`);
     } catch (e) {
       /* helper died; the exit handler cleans the feed up */
     }
-  }, 30);
+  }, 2000);
   waylandPosFeedTimer.unref?.();
 }
 
@@ -2383,7 +2393,26 @@ function stopWaylandPosFeed() {
     clearInterval(waylandPosFeedTimer);
     waylandPosFeedTimer = null;
   }
+  lastWheelPos = null;
 }
+
+ipcMain.on("wheel-cursor", (_event, x, y) => {
+  if (!isWaylandNative || !radialMouseBlocker || !radialMouseBlockerReady) return;
+  const rect = waylandBlockRect;
+  if (!rect) return;
+  try {
+    if (x === null || y === null) {
+      /* pointer left the wheel's monitor: fail open — clicks pass to whatever is under them */
+      radialMouseBlocker.stdin.write("POS -1 -1\n");
+      lastWheelPos = null;
+      return;
+    }
+    lastWheelPos = [rect.x + x, rect.y + y];
+    radialMouseBlocker.stdin.write(`POS ${lastWheelPos[0]} ${lastWheelPos[1]}\n`);
+  } catch (e) {
+    diagLog(`[RadialBlocker] wheel-cursor: ${e.message}`);
+  }
+});
 
 /**
  * Hands the trigger button's capture to the hook. `slop` decides what still counts as a plain click
@@ -6307,6 +6336,13 @@ app.whenReady().then(async () => {
   };
 
   const startMmbCursorTracking = () => {
+    /**
+     * Wayland: `getCursorScreenPoint` always answers 0,0 (no global cursor query exists), so the
+     * synthesized mmb-cursor stream would drag the aim to the top-left corner. Real motion already
+     * reaches the renderer — the helper forwards it — and this poll exists only for the Windows
+     * pointer-capture workaround.
+     */
+    if (isWaylandNative) return;
     stopMmbCursorTracking();
     mmbCursorStartedAt = Date.now();
     mmbCursorTimer = setInterval(() => {
@@ -7918,6 +7954,7 @@ shortcut and add the app again to pick up the current one.`,
  * `invoke`'s item.
  */
 ipcMain.handle("execute-command", async (_event, command, commandType, options = {}) => {
+  diagLog(`[EXEC] execute-command arrived: ${String(command).slice(0, 80)} type=${commandType}`);
   try {
     return await runExecuteCommand(command, commandType, options);
   } catch (err) {

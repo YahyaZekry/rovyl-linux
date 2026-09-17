@@ -1,9 +1,9 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-09-14
+> Last updated: 2026-09-15
 > Status: Active
 > Stack: Electron 28 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
-> Current goal: Dual-platform (Windows + Linux/Wayland-first) — gesture, discovery and packaging work on Linux; remaining: CI workflows, deb polish, Windows regression pass after the Electron 44 jump
+> Current goal: Linux/Wayland port user-verified end-to-end; remaining: CI workflows, deb polish, Windows regression pass, repo rename
 
 ## What This Project Does
 

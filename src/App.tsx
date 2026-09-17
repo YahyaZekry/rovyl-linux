@@ -2105,6 +2105,7 @@ export default function App() {
       }
     });
 
+
     const cleanupPrepareRadial = window.electron?.onPrepareRadialShow?.((payload) => {
       /**
        * `vacatePanel`: main is about to MOVE the window out from under the panel, and what it hides
@@ -2409,13 +2410,38 @@ export default function App() {
     }
   }, []);
 
+  /**
+   * Wayland cursor truth: while the wheel is open the renderer receives the real motion (the
+   * helper forwards it), and main translates client coords with the BLOCK rect origin to feed
+   * the helper's `POS`. Throttled; `null` marks the pointer off-monitor so clicks fail open
+   * instead of being classified at a stale position. Top-level effect — never nest hooks.
+   */
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    let lastSent = 0;
+    const send = (x: number | null, y: number | null) => window.electron?.wheelCursor?.(x, y);
+    const onMove = (e: MouseEvent) => {
+      const now = Date.now();
+      if (now - lastSent < 30) return;
+      lastSent = now;
+      send(e.clientX, e.clientY);
+    };
+    const onLeave = () => send(null, null);
+    document.addEventListener('mousemove', onMove);
+    document.documentElement.addEventListener('mouseleave', onLeave);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.documentElement.removeEventListener('mouseleave', onLeave);
+      send(null, null);
+    };
+  }, [isMenuOpen]);
+
   const executeAction = (
     command: string,
     commandType: "app" | "url" | "folder" | "file",
     itemForFault?: AppItem,
     options?: { openTerminal?: boolean; terminalCommands?: string[]; workingDirectory?: string; launchMode?: 'normal' | 'reuse' | 'prewarm' }
   ) => {
-    // console.log("🚀 Zenith executing:", command, "Type:", commandType);
     if (!command) {
       console.warn("Attempted to execute an empty command");
       return;
