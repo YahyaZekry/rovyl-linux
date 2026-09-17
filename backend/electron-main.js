@@ -3082,7 +3082,12 @@ function updateWindowSize(mode, anchorScreenPoint) {
     mainWindow.setAlwaysOnTop(true, "screen-saver", 1);
     mainWindow.setResizable(true);
     try {
-      if (!mainWindow.isVisible()) mainWindow.showInactive();
+      if (isWaylandNative) {
+        /** Same Wayland passthrough failure as the idle collapse — hide instead of shield. */
+        if (mainWindow.isVisible()) mainWindow.hide();
+      } else {
+        if (!mainWindow.isVisible()) mainWindow.showInactive();
+      }
       mainWindow.webContents.setBackgroundThrottling(true);
     } catch (e) {
       /* ignore */
@@ -3793,6 +3798,7 @@ app.whenReady().then(async () => {
     globalShortcut: "Alt+Z",
     shortcutTriggerMode: "toggle",
     enableMouseTrigger: true,
+    middleClickOpensMenu: true,
     mouseTriggerMode: "click",
     mouseTriggerButton: "middle",
     openAtLogin: false,
@@ -3884,9 +3890,13 @@ app.whenReady().then(async () => {
     if (ui.shortcutTriggerMode === "click" || ui.shortcutTriggerMode === "hold" || ui.shortcutTriggerMode === "toggle") {
       currentSettings.shortcutTriggerMode = ui.shortcutTriggerMode;
       if (cachedRadialFlags) cachedRadialFlags.shortcutTriggerMode = ui.shortcutTriggerMode;
+      if (cachedRadialFlags) cachedRadialFlags.middleClickOpensMenu = ui.middleClickOpensMenu !== false;
     }
     if (typeof ui.enableMouseTrigger === "boolean") {
       currentSettings.enableMouseTrigger = ui.enableMouseTrigger;
+    }
+    if (typeof ui.middleClickOpensMenu === "boolean") {
+      currentSettings.middleClickOpensMenu = ui.middleClickOpensMenu;
     }
     if (ui.mouseTriggerMode === "click" || ui.mouseTriggerMode === "hold") {
       currentSettings.mouseTriggerMode = ui.mouseTriggerMode;
@@ -4017,6 +4027,7 @@ app.whenReady().then(async () => {
   /** Used with the non-blocking middle-button state monitor. */
   const cachedRadialFlags = {
     enableMouseTrigger: currentSettings.enableMouseTrigger !== false,
+    middleClickOpensMenu: currentSettings.middleClickOpensMenu !== false,
     mouseTriggerMode:
       currentSettings.mouseTriggerMode === "hold" ? "hold" : "click",
     shortcutTriggerMode:
@@ -4036,6 +4047,7 @@ app.whenReady().then(async () => {
       if (typeof fc.enableMouseTrigger === "boolean") {
         cachedRadialFlags.enableMouseTrigger = fc.enableMouseTrigger;
       }
+      cachedRadialFlags.middleClickOpensMenu = fc.middleClickOpensMenu !== false;
       if (fc.mouseTriggerMode === "click" || fc.mouseTriggerMode === "hold") {
         cachedRadialFlags.mouseTriggerMode = fc.mouseTriggerMode;
       }
@@ -6524,6 +6536,14 @@ app.whenReady().then(async () => {
               );
               continue;
             }
+            /**
+             * `middleClickOpensMenu: false` = the middle button stays 100% native: the helper has
+             * already handed the click to the app, and main never opens the menu from it.
+             */
+            if (cachedRadialFlags.middleClickOpensMenu === false) {
+              mmbClickDownAt = 0;
+              continue;
+            }
             const allowed = await shouldOpenMenu();
             /**
              * The gesture may have been replaced while game mode was being checked: a new DOWN
@@ -8832,7 +8852,17 @@ ipcMain.handle("collapse-idle-overlay", () => {
   try {
     mainWindow.setIgnoreMouseEvents(true);
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    if (!mainWindow.isVisible()) mainWindow.showInactive();
+    if (isWaylandNative) {
+      /**
+       * Wayland ignores `setIgnoreMouseEvents` on a shown window in practice, leaving this
+       * transparent square as an invisible input shield dead-centre on the desktop — clicks and
+       * scrolls inside its rect die until something raises above it. Hiding costs nothing here:
+       * the DWM layered-window flash the visible idle avoids is a Windows phenomenon.
+       */
+      if (mainWindow.isVisible()) mainWindow.hide();
+    } else {
+      if (!mainWindow.isVisible()) mainWindow.showInactive();
+    }
     mainWindow.webContents.setBackgroundThrottling(true);
   } catch (e) {
     /* ignore */
@@ -8845,7 +8875,9 @@ ipcMain.handle("collapse-idle-overlay", () => {
     }
   }
   windowBuriedPassive = false;
-  diagLog("[Overlay] Stable idle: transparent radial surface and mouse passthrough.");
+  diagLog(isWaylandNative
+    ? "[Overlay] Stable idle: window hidden (Wayland passthrough cannot be trusted)."
+    : "[Overlay] Stable idle: transparent radial surface and mouse passthrough.");
   scheduleIdleMemoryCleanup(2500);
   return true;
 });
