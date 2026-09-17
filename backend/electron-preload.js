@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electron", {
    * channel that did not say WHICH shortcut failed. The renderer paired it with the last dispatch by
    * matching commands within 15 s; coming back this way, the item is the call's own.
    */
+  isWaylandNative: () => ipcRenderer.invoke("get-platform-info"),
   executeCommand: (command, commandType, options) =>
     ipcRenderer.invoke("execute-command", command, commandType, options),
   hideWindow: () => ipcRenderer.send("hide-window"),

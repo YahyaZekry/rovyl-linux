@@ -314,6 +314,7 @@ export interface ElectronAPI {
   onBlockClick?: (callback: () => void) => () => void;
   /** Real pointer position while the wheel is open (Wayland has no global cursor query). */
   wheelCursor?: (x: number | null, y: number | null) => void;
+  isWaylandNative?: () => Promise<{ wayland: boolean }>;
   onOpenMenu: (
     callback: (data: {
       x: number;
