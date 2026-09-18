@@ -5186,6 +5186,12 @@ app.whenReady().then(async () => {
     if (!tray || tray.isDestroyed()) return;
     try {
       tray.setToolTip(triggersArePaused() ? "Rovyl — trigger paused" : "Rovyl");
+      /**
+       * Linux StatusNotifier: the desktop shell owns the tray menu over D-Bus, and Electron's
+       * `right-click`/`click` events never fire there. The menu must be attached permanently and
+       * rebuilt on state changes — the Windows pop-up dance below never runs on this platform.
+       */
+      if (process.platform !== "win32") tray.setContextMenu(buildTrayMenu());
     } catch (e) {
       diagLog(`[Tray] refresh: ${e.message}`);
     }
@@ -5202,25 +5208,31 @@ app.whenReady().then(async () => {
     tray = new Tray(resizedIcon);
     tray.setToolTip("Rovyl");
 
-    /**
-     * No `setContextMenu`: that is what makes Electron emit `right-click` instead of popping the
-     * menu inside the button-down. See `popUpTrayMenu`.
-     */
-    tray.on("right-click", () => {
-      void popUpTrayMenu();
-    });
+    if (process.platform !== "win32") {
+      /** Linux: attach the menu over D-Bus (see `refreshTrayMenu`). */
+      tray.setContextMenu(buildTrayMenu());
+    } else {
+      /**
+       * No `setContextMenu`: that is what makes Electron emit `right-click` instead of popping
+       * the menu inside the button-down. See `popUpTrayMenu`. Windows only — Linux StatusNotifier
+       * trays never fire these events and would be left with no menu at all.
+       */
+      tray.on("right-click", () => {
+        void popUpTrayMenu();
+      });
 
-    /**
-     * On Windows a context menu does NOT swallow the left button — that constraint is macOS's.
-     * Both listeners below share one cooldown on purpose: whether a double-click really yields
-     * click+double-click or click+click, the outcome is the same.
-     */
-    tray.on("click", () => {
-      void openSettingsFromTray();
-    });
-    tray.on("double-click", () => {
-      void openSettingsFromTray();
-    });
+      /**
+       * On Windows a context menu does NOT swallow the left button — that constraint is macOS's.
+       * Both listeners below share one cooldown on purpose: whether a double-click really yields
+       * click+double-click or click+click, the outcome is the same.
+       */
+      tray.on("click", () => {
+        void openSettingsFromTray();
+      });
+      tray.on("double-click", () => {
+        void openSettingsFromTray();
+      });
+    }
 
     // Startup feedback
     console.log("Rovyl started successfully in the background.");
