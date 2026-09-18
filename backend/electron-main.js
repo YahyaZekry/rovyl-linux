@@ -199,6 +199,30 @@ const scheduleLogFlush = () => {
  * side buttons (X1/X2) are free in the overwhelming majority of applications.
  */
 const MOUSE_TRIGGER_VK = { middle: 0x04, x1: 0x05, x2: 0x06 };
+
+/** Accelerator → evdev key code + modifier mask for the helper's passive hotkey watch. */
+function acceleratorToEvdevCode(accelerator) {
+  const key = String(accelerator || "")
+    .split("+")
+    .pop()
+    .trim()
+    .toUpperCase();
+  if (/^[A-Z]$/.test(key)) return 30 + (key.charCodeAt(0) - 65);
+  if (/^[0-9]$/.test(key)) return 11 - (key.charCodeAt(0) - 48) + (key.charCodeAt(0) - 48); // KEY_0=11
+  if (/^F([1-9]|1[0-2])$/.test(key)) return 59 + (parseInt(key.slice(1), 10) - 1);
+  return 0;
+}
+function acceleratorToModMask(accelerator) {
+  let mask = 0;
+  for (const part of String(accelerator || "").split("+")) {
+    const p = part.trim().toLowerCase();
+    if (p === "control" || p === "ctrl") mask |= 1;
+    else if (p === "alt" || p === "option") mask |= 2;
+    else if (p === "shift") mask |= 4;
+    else if (p === "super" || p === "meta" || p === "win") mask |= 8;
+  }
+  return mask;
+}
 const MOUSE_TRIGGER_BUTTONS = Object.keys(MOUSE_TRIGGER_VK);
 
 /**
@@ -1863,7 +1887,16 @@ function collapseOverlayToIdle(anchorScreenPoint) {
     overlayWindow.setIgnoreMouseEvents(true);
     applyOverlayIdleBounds(anchorScreenPoint);
     overlayWindow.setAlwaysOnTop(true, "screen-saver", 1);
-    if (!overlayWindow.isVisible()) overlayWindow.showInactive();
+    /**
+     * Wayland ignores `setIgnoreMouseEvents` — a visible idle overlay would be an invisible
+     * input shield over the desktop, and would also keep a taskbar entry (no skip-taskbar
+     * protocol there). Hidden windows have neither problem; the open path shows it again.
+     */
+    if (isWaylandNative) {
+      if (overlayWindow.isVisible()) overlayWindow.hide();
+    } else {
+      if (!overlayWindow.isVisible()) overlayWindow.showInactive();
+    }
     overlayWindow.webContents.setBackgroundThrottling(true);
   } catch (e) {
     /* ignore */
@@ -2055,10 +2088,15 @@ function sendToOverlay(channel, payload) {
  * around it, the taskbar screen, the parked cursor, and the `clientPosition` the renderer draws at.
  */
 function showMenuAtCursor(source = "shortcut") {
-  void ensureOverlayWindow().then((win) => {
+  void ensureOverlayWindow().then(async (win) => {
     if (!win || win.isDestroyed()) return;
     cancelIdleMemoryCleanup();
     const radialOpenStartedAt = Date.now();
+    /** Wayland: the only cursor source is the helper's tracked position. */
+    if (isWaylandNative) {
+      const p = await queryWaylandCursor();
+      if (p) waylandCursorPoint = p;
+    }
 
     /**
      * One reading of the pointer, used for both answers. Asking twice would let the hand move
@@ -2437,6 +2475,8 @@ let pendingRadialMouseBlockCommand = null;
 let radialTriggerListener = null;
 /** Set by the trigger owner once the hook exists: respawns a dead helper and re-arms the capture. */
 let requestBlockerRespawn = null;
+/** Set by the shortcut owner: opens the wheel from the helper's HOTKEY_PRESSED (scope bridge). */
+let openRadialFromShortcutRef = null;
 
 /** Drag slop: below this the press was a click, not an aim. */
 const TRIGGER_PASSTHROUGH_SLOP_PX = 6;
@@ -2471,6 +2511,12 @@ const NATIVE_HELPER_BIN =
       : null;
 
 let cachedNativeHelperPath; // undefined = not probed yet
+
+/** Windows always has a helper (exe, with a PowerShell fallback). Linux has no fallback: the
+ * gesture layer exists only when the built binary is present. */
+function nativeHelperEnabled() {
+  return process.platform === "win32" || !!getNativeHelperExePath();
+}
 
 function isInsideAsarArchive(candidate) {
   return /\.asar([\\/]|$)/i.test(candidate) && !/\.asar\.unpacked/i.test(candidate);
@@ -2655,6 +2701,12 @@ function ensureRadialMouseBlocker() {
           onNativeRecordMouse(btnName, modMask);
         } catch (e) {
           diagLog(`[RadialBlocker] record mouse: ${e.message}`);
+        }
+      } else if (line === "HOTKEY_PRESSED") {
+        try {
+          openRadialFromShortcutRef?.(currentSettings.globalShortcut || "Alt+Z");
+        } catch (e) {
+          diagLog(`[RadialBlocker] hotkey: ${e.message}`);
         }
       } else if (line === "SHORTCUT_DOWN") {
         try {
@@ -5337,6 +5389,7 @@ app.whenReady().then(async () => {
     lastShortcutRegistrationSignature = registrationSignature;
     globalShortcut.unregisterAll();
     let shortcut = currentSettings.globalShortcut || "Alt+Z";
+    openRadialFromShortcutRef = (source) => void openRadialFromShortcut(source);
     const openRadialFromShortcut = async (sourceShortcut) => {
       diagLog(`${sourceShortcut} shortcut triggered`);
       const isHoldMode = cachedRadialFlags.shortcutTriggerMode === "hold";
@@ -5411,6 +5464,13 @@ app.whenReady().then(async () => {
           const registered = globalShortcut.register(shortcut, () =>
             openRadialFromShortcut(shortcut),
           );
+
+          /** Wayland: globalShortcut has no compositor protocol to reach — the helper's
+           * passive keyboard watch is the one that actually fires. Keep the Electron
+           * registration for X11 sessions; on Wayland it just returns true and does nothing. */
+          if (isWaylandNative && radialMouseBlocker && radialMouseBlockerReady) {
+            writeRadialMouseBlocker(`HOTKEY ${acceleratorToEvdevCode(shortcut)} ${acceleratorToModMask(shortcut)}`);
+          }
 
           if (registered) {
             diagLog(`Global shortcut '${shortcut}' registered successfully.`);

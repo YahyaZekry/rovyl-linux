@@ -937,6 +937,13 @@ static int ev_click_press_armed, ev_click_injected;
 static long long ev_down_at;
 static long long ev_gesture_dx, ev_gesture_dy;
 
+/*
+ * Approximate absolute cursor position, tracked from the renderer's `POS` anchor plus every REL
+ * delta we forward. libinput acceleration makes this drift from the true position, so it is only
+ * used for coarse answers (which monitor the pointer is on) — never for exact placement.
+ */
+static long long cur_x = 0, cur_y = 0;
+
 static volatile int ev_blocking;
 /*
  * The block must never outlive the session that asked for it: main proves the wheel/panel is
@@ -953,6 +960,14 @@ static int ev_last_x = -1, ev_last_y = -1;
 static volatile int ev_record_mode;
 static int ev_shortcut_vk, ev_shortcut_mod_mask, ev_shortcut_active;
 static int ev_mod_mask;
+/*
+ * Global hotkey via passive keyboard observation: keyboards are opened read-only (never grabbed),
+ * so the compositor keeps receiving every key — the app behaves natively — and we just watch for
+ * the configured combo. This is how the global shortcut works on Wayland, where Electron's
+ * globalShortcut has no protocol to reach.
+ */
+static int hotkey_code;                /* evdev key code, 0 = none */
+static int hotkey_mod_mask;
 
 static int ev_point_in(int x, int y, int l, int t, int r, int b) {
   return x >= l && x < r && y >= t && y < b;
@@ -1049,6 +1064,8 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
 }
 
 static void ev_handle_rel(struct ev_source *src, unsigned int code, int value) {
+  if (code == REL_X) cur_x += value;
+  else if (code == REL_Y) cur_y += value;
   if (ev_trigger_held) {
     if (code == REL_X) ev_gesture_dx += value;
     else if (code == REL_Y) ev_gesture_dy += value;
@@ -1098,9 +1115,22 @@ static void ev_apply_command(char *line) {
     ev_blocking = 1;
   } else if (strcmp(parts[0], "UNBLOCK") == 0) {
     ev_blocking = 0;
+  } else if (strcmp(parts[0], "HOTKEY") == 0 && n == 3) {
+    hotkey_code = atoi(parts[1]);
+    hotkey_mod_mask = atoi(parts[2]);
+    if (hotkey_code == 0 || (hotkey_mod_mask & ~(MOD_CTRL | MOD_ALT | MOD_SHIFT | MOD_SUPER))) {
+      hotkey_code = 0;
+      hotkey_mod_mask = 0;
+    }
+  } else if (strcmp(parts[0], "CURSORQ") == 0) {
+    char reply[48];
+    snprintf(reply, sizeof(reply), "CURSOR %lld %lld", cur_x, cur_y);
+    emit(reply);
   } else if (strcmp(parts[0], "POS") == 0 && n == 3) {
     ev_last_x = atoi(parts[1]);
     ev_last_y = atoi(parts[2]);
+    cur_x = ev_last_x;
+    cur_y = ev_last_y;
 
   } else if (strcmp(parts[0], "TRIGGER") == 0) {
     if (ev_click_injected && ev_trigger_src) {
@@ -1243,6 +1273,11 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
               if (bit) {
                 if (evs[k].value != 0) ev_mod_mask |= bit;
                 else ev_mod_mask &= ~bit;
+              } else if (hotkey_code && evs[k].code == (unsigned)hotkey_code) {
+                /** Press = fire; release is left alone so the app sees a normal key pair. */
+                if (evs[k].value != 0) {
+                  if (ev_mod_mask == hotkey_mod_mask) emit("HOTKEY_PRESSED");
+                }
               }
             }
           }
