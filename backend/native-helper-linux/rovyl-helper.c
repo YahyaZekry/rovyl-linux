@@ -951,7 +951,7 @@ static volatile int ev_blocking;
  * blocking means the other side is gone (crashed renderer, lost race, anything) — release the
  * block ourselves. Worst case for the user is a few seconds of dead clicks, never a forced quit.
  */
-#define BLOCK_WATCHDOG_MS 5000
+#define BLOCK_WATCHDOG_MS 2000
 static long long ev_last_stdin_ms;
 static int ev_block_l, ev_block_t, ev_block_r, ev_block_b;
 static int ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b;

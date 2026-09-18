@@ -1883,6 +1883,9 @@ function collapseOverlayToIdle(anchorScreenPoint) {
   /** Nobody is reading the dock with no wheel on screen: the poll stops until the next open. */
   systemStatus.setWatching(false);
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  /** The block MUST die here: upstream's close never knew about it, and a missed UNBLOCK is a
+   * dead mouse. This is the only path the wheel takes back to idle. */
+  clearRadialMouseBlocking();
   try {
     overlayWindow.setIgnoreMouseEvents(true);
     applyOverlayIdleBounds(anchorScreenPoint);
@@ -2708,6 +2711,16 @@ function ensureRadialMouseBlocker() {
         } catch (e) {
           diagLog(`[RadialBlocker] hotkey: ${e.message}`);
         }
+      } else if (line.startsWith("CURSOR ")) {
+        const parts = line.slice(7).trim().split(" ");
+        const px = parseInt(parts[0], 10);
+        const py = parseInt(parts[1], 10);
+        if (Number.isFinite(px) && Number.isFinite(py)) {
+          waylandCursorPoint = { x: px, y: py };
+          const waiters = waylandCursorWaiters;
+          waylandCursorWaiters = null;
+          if (waiters) waiters.resolve({ x: px, y: py });
+        }
       } else if (line === "SHORTCUT_DOWN") {
         try {
           triggerRadialShortcut();
@@ -2824,6 +2837,35 @@ function waitForMouseButtonsUp(timeoutMs = 400) {
 let waylandBlockRect = null;
 /** Last renderer-reported cursor position (screen coords); re-sent as the watchdog heartbeat. */
 let lastWheelPos = null;
+/** Last helper-reported coarse position (CURSORQ answer); the follow-pointer source on Wayland. */
+let waylandCursorPoint = null;
+let waylandCursorWaiters = null;
+
+/**
+ * Ask the helper for its tracked cursor position. Acceleration drift makes this approximate —
+ * it is used for monitor choice and coarse placement, then the renderer's real motion takes over.
+ */
+function queryWaylandCursor() {
+  if (!isWaylandNative || !radialMouseBlocker || !radialMouseBlockerReady || !radialMouseBlocker.stdin?.writable) {
+    return Promise.resolve(waylandCursorPoint);
+  }
+  if (waylandCursorPoint) return Promise.resolve(waylandCursorPoint);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      waylandCursorWaiters = null;
+      resolve(waylandCursorPoint);
+    }, 150);
+    timer.unref?.();
+    waylandCursorWaiters = { resolve };
+    try {
+      radialMouseBlocker.stdin.write("CURSORQ\n");
+    } catch (e) {
+      clearTimeout(timer);
+      waylandCursorWaiters = null;
+      resolve(waylandCursorPoint);
+    }
+  });
+}
 
 function setRadialMouseBlocking(bounds, monitorBounds) {
   if (process.platform !== "win32" && process.platform !== "linux") return;
