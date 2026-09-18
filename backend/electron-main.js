@@ -6728,6 +6728,12 @@ app.whenReady().then(async () => {
              * eating the next gesture's release.
              */
             if (!allowed || mmbHoldGestureId !== gestureId) continue;
+            /**
+             * The helper held the quick click back for exactly this window: the menu absorbs it
+             * (CLICK_CONSUMED cancels the injection). A refused gesture still delivers the click
+             * to the app after the delay.
+             */
+            writeRadialMouseBlocker("CLICK_CONSUMED");
             showMenuAtCursor("mmb-click");
             continue;
           }

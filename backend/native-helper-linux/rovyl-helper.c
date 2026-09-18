@@ -944,6 +944,17 @@ static long long ev_gesture_dx, ev_gesture_dy;
  */
 static long long cur_x = 0, cur_y = 0;
 
+/*
+ * Click mode hands a quick press back AFTER main has decided: a menu opening absorbs the click
+ * (main cancels it with CLICK_CONSUMED), a refused one lands in the app 250 ms later. Injecting
+ * at release races the wheel's own reveal and fired both the app action AND the menu.
+ */
+#define PASSTHROUGH_DELAY_MS 250
+static int ev_pending_passthrough;
+static struct ev_source *ev_pending_src;
+static unsigned int ev_pending_btn;
+static long long ev_pending_at;
+
 static volatile int ev_blocking;
 /*
  * The block must never outlive the session that asked for it: main proves the wheel/panel is
@@ -1009,6 +1020,7 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
 
   if (ev_trigger_vk && vk == ev_trigger_vk) {
     if (press && !ev_trigger_held) {
+      ev_pending_passthrough = 0; /* a new gesture supersedes a held-back click */
       ev_trigger_held = 1;
       ev_trigger_src = src;
       ev_down_at = evdev_now_ms();
@@ -1040,8 +1052,10 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
         emit("TRIGGER_HOLD");
       } else {
         emit("TRIGGER_UP");
-        inject_button(src, code, 1);
-        inject_button(src, code, 0);
+        ev_pending_passthrough = 1;
+        ev_pending_src = src;
+        ev_pending_btn = code;
+        ev_pending_at = evdev_now_ms() + PASSTHROUGH_DELAY_MS;
       }
       return;
     }
@@ -1122,6 +1136,8 @@ static void ev_apply_command(char *line) {
       hotkey_code = 0;
       hotkey_mod_mask = 0;
     }
+  } else if (strcmp(parts[0], "CLICK_CONSUMED") == 0) {
+    ev_pending_passthrough = 0; /* main opened the menu: the click is absorbed by the wheel */
   } else if (strcmp(parts[0], "CURSORQ") == 0) {
     char reply[48];
     snprintf(reply, sizeof(reply), "CURSOR %lld %lld", cur_x, cur_y);
@@ -1231,7 +1247,7 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
      * appear before they are readable — a periodic poll is simple and never misses.
      */
     struct timeval tv = {1, 0}, *tvp = &tv;
-    if (ev_trigger_held && !ev_trigger_hold_mode) { tv.tv_sec = 0; tv.tv_usec = 15000; }
+    if (ev_pending_passthrough || (ev_trigger_held && !ev_trigger_hold_mode)) { tv.tv_sec = 0; tv.tv_usec = 15000; }
     int ready = select(maxfd + 1, &fds, NULL, NULL, tvp);
     if (ready < 0 && errno != EINTR) break;
 
@@ -1295,6 +1311,11 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
       ev_blocking = 0;
       fprintf(stderr, "rovyl-helper-linux: no session heartbeat for %d ms while blocking — auto-unblocked\n",
               BLOCK_WATCHDOG_MS);
+    }
+    if (ev_pending_passthrough && evdev_now_ms() >= ev_pending_at) {
+      ev_pending_passthrough = 0;
+      inject_button(ev_pending_src, ev_pending_btn, 1);
+      inject_button(ev_pending_src, ev_pending_btn, 0);
     }
     ev_poll_click_hold();
   }

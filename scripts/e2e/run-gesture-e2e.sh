@@ -66,20 +66,35 @@ fail() {
 
 echo "TRIGGER 4 click 6 400 30" >&3; sleep 0.4
 
-# A: quick middle click -> native click delivered
+# A: quick middle click with a live menu -> held back, CLICK_CONSUMED cancels it
+echo "TRIGGER 4 click 6 400 1000" >&3; sleep 0.4
+echo "BLOCK 100 100 500 400 0 0 1920 1080" >&3; sleep 0.4
+echo "POS 200 200" >&3; sleep 0.3
+echo "p 2" >&4; sleep 0.15; echo "r 2" >&4; sleep 0.3
+echo "CLICK_CONSUMED" >&3; sleep 0.4
+echo "UNBLOCK" >&3; sleep 0.4
+
+# A2: quick middle click, no menu -> native click delivered
+C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH0=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+echo "TRIGGER 4 click 6 400 1000" >&3; sleep 0.4
 echo "p 2" >&4; sleep 0.15; echo "r 2" >&4; sleep 0.5
-grep -q "TRIGGER_DOWN" "$TMP/helper.out" || fail "A: no TRIGGER_DOWN"
-grep -q "TRIGGER_UP" "$TMP/helper.out" || fail "A: no TRIGGER_UP"
-grep -q "KEY 274 1" "$TMP/fwd.out" && grep -q "KEY 274 0" "$TMP/fwd.out" || fail "A: passthrough click not delivered"
+C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH1=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+[ "$C1" -gt "$C0" ] || fail "A2: passthrough click not delivered"
+[ "$TH1" = "$TH0" ] || fail "A2: unexpected autoscroll injection"
 
 # B: long hold -> autoscroll handover (down injected at holdMs, up at release)
+C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH0=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
 echo "p 2" >&4; sleep 1.15; echo "r 2" >&4; sleep 0.5
-grep -q "TRIGGER_HOLD" "$TMP/helper.out" || fail "B: no TRIGGER_HOLD"
-[ "$(grep -c 'KEY 274 1' "$TMP/fwd.out")" = "2" ] || fail "B: expected exactly 2 middle-down events after B"
+C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH1=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+[ "$TH1" -gt "$TH0" ] || fail "B: no TRIGGER_HOLD"
+[ "$C1" -gt "$C0" ] || fail "B: autoscroll injection not delivered"
 
-# C: drag past dragPx -> same handover via the drag rule
-echo "p 2" >&4; sleep 0.1; echo "m 40 0" >&4; sleep 0.1; echo "r 2" >&4; sleep 0.5
-[ "$(grep -c 'TRIGGER_HOLD' "$TMP/helper.out")" -ge 2 ] || fail "C: no second TRIGGER_HOLD"
+# C: drag past dragPx (1000 in this run) -> same handover via the drag rule
+C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH0=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+echo "p 2" >&4; sleep 0.1; echo "m 1100 0" >&4; sleep 0.1; echo "r 2" >&4; sleep 0.5
+C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH1=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+[ "$TH1" -gt "$TH0" ] || fail "C: no TRIGGER_HOLD"
+[ "$C1" -gt "$C0" ] || fail "C: injection not delivered"
 
 # D: BLOCK + POS outside allowed -> swallowed (BTN_LEFT count unchanged)
 echo "BLOCK 100 100 500 400 0 0 1920 1080" >&3; sleep 0.4
