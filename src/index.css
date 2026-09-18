@@ -75,6 +75,9 @@
   --zn-icon: 16px;
 
   --zn-ease: cubic-bezier(.22, 1, .36, 1);
+  /* One duration for everything that opens or closes in place. `Collapse.tsx` holds the same
+     number: the exit has to keep the node mounted for exactly as long as this paints. */
+  --zn-collapse: 240ms;
 }
 
 [data-zn-theme="white"] {
@@ -235,10 +238,12 @@
   height: var(--zn-ctl); display: flex; align-items: center; gap: var(--zn-2);
   padding-inline: var(--zn-2) var(--zn-1);
   color: var(--zn-text-3); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: var(--zn-surface);
-  transition: border-color .15s var(--zn-ease);
 }
-.zs-search:focus-within { border-color: var(--zn-line-strong); }
 .zs-search input { min-width: 0; flex: 1; height: 100%; color: var(--zn-text); border: 0; outline: 0; background: transparent; font-size: 12.5px; }
+/* The field is the box, not the input: the input is transparent and square, so the shell-wide
+ * focus halo drew a rectangle across the rounded box around it. The caret carries the focus. */
+.zs-search input:focus,
+.zs-search input:focus-visible { outline: 0; box-shadow: none; }
 .zs-search input::placeholder { color: var(--zn-text-3); }
 .zs-search button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; color: var(--zn-text-3); border: 0; border-radius: var(--zn-r-chip); background: transparent; cursor: pointer; }
 .zs-search button:hover { color: var(--zn-text); background: var(--zn-raised); }
@@ -253,12 +258,6 @@
 }
 .zs-nav button span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .zs-nav-label { flex: 1; }
-/* Something in this section no longer matches the shipped default. Not a `span`: the collapse rule
-   above hides those, and this is the half worth keeping on a 60px rail. */
-.zs-nav-dot {
-  flex: none; width: 5px; height: 5px; border-radius: 50%;
-  background: var(--zn-text-2); opacity: .8;
-}
 .zs-nav button svg { flex: none; color: var(--zn-text-3); transition: color .15s var(--zn-ease); }
 .zs-nav button:hover { color: var(--zn-text); background: var(--zn-hover); }
 .zs-nav button:hover svg { color: var(--zn-text-2); }
@@ -283,12 +282,35 @@
 .zs-page-head h1 { margin: 0 0 var(--zn-1); color: var(--zn-text); font-size: 21px; font-weight: 600; line-height: 1.15; letter-spacing: -.022em; }
 .zs-page-head p { margin: 0; color: var(--zn-text-2); font-size: 12.5px; line-height: 1.45; }
 
-.zs-group + .zs-group { margin-top: var(--zn-6); }
+.zs-group + .zs-group { margin-top: var(--zn-8); }
 /* Group label: set apart from the description (11.5px/400) by weight, not by caps or tracking. */
 .zs-group-title { margin: 0 0 var(--zn-2); color: var(--zn-text-2); font-size: 12px; font-weight: 600; letter-spacing: -.005em; }
 
-/* Continuous composition: dividers separate, not boxes. */
+/* One rule per group, under its title, and none between the rows.
+   A divider under every row turned a five-setting group into six horizontal lines and the page
+   into a ruled pad; the group's title and the space around it already say where it begins and
+   ends. Rows are separated by their own padding — proximity, not ink. */
 .zs-rows { border-top: 1px solid var(--zn-line); }
+
+/* ── Reveal in place ────────────────────────────────────────────────────────
+   A row that exists because another switch is on arrives by opening, not by being there.
+
+   `0fr → 1fr` on the single grid row rather than an animated height: the track resolves to
+   whatever the content measures, so nothing has to be measured in JS and — the part a JS height
+   cannot do — the box goes on tracking its content after the transition ends, when the row
+   restacks at a narrow width or a confirm opens inside it. */
+.zs-collapse {
+  display: grid; grid-template-rows: 1fr;
+  transition: grid-template-rows var(--zn-collapse) var(--zn-ease),
+              opacity calc(var(--zn-collapse) * .65) var(--zn-ease);
+}
+.zs-collapse[data-open="false"] { grid-template-rows: 0fr; opacity: 0; }
+.zs-collapse-inner { min-height: 0; overflow: hidden; }
+/* Clipping is only needed while the box is shorter than its contents. Left on it would cut the
+   focus ring of the last row and the drop marker that sits a pixel above it. */
+.zs-collapse[data-settled="true"] > .zs-collapse-inner { overflow: visible; }
+/* A reveal inside a row (the confirm body) takes the row's full width, as the block it wraps did. */
+.zs-row > .zs-collapse { grid-column: 1 / -1; }
 
 /* ── Wheel preview (Appearance) ─────────────────────────────────────────────
    Sticky, because the sliders it answers to run past the fold: "Background
@@ -324,6 +346,9 @@
   border: 2px solid rgba(255,255,255,.32);
 }
 .zs-wheel-slot { position: absolute; left: 0; top: 0; }
+/* Area targeting's wedges, centred on the layer's origin like every other piece of the preview.
+   It sits at the bottom of the stack: the wedges are the ground the wheel stands on. */
+.zs-wheel-sectors { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); }
 .zs-wheel-tile {
   display: grid; place-items: center; border-radius: 18px; border: 1px solid;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 0 0 1px rgba(0,0,0,.5), 0 8px 22px rgba(0,0,0,.42);
@@ -335,11 +360,22 @@
   font: 500 13px/1 var(--font-ui);
   box-shadow: 0 0 0 1px rgba(0,0,0,.45), 0 6px 18px rgba(0,0,0,.45);
 }
+/* The context pill under the wheel, in the wheel's own measurements (see RadialMenu). */
+.zs-wheel-pill {
+  position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+  background: rgba(4,5,7,.92); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 0 0 1px rgba(0,0,0,.45);
+  font: 500 11px/1 var(--font-radial); color: rgba(255,255,255,.6);
+}
+.zs-wheel-pill > span:last-child {
+  padding: 4px 6px; border-radius: 5px; background: rgba(255,255,255,.09);
+  font-size: 10px; font-weight: 400; color: rgba(255,255,255,.45);
+}
 .zs-wheel-caption {
   margin: var(--zn-2) 0 0; color: var(--zn-text-3); font-size: 10.5px; line-height: 1.4;
 }
 
-.zs-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--zn-6); padding-block: var(--zn-3); border-bottom: 1px solid var(--zn-line); }
+.zs-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--zn-6); padding-block: var(--zn-3); }
 .zs-row.is-openable { cursor: pointer; }
 .zs-row-copy { min-width: 0; }
 .zs-row-copy b { display: block; color: var(--zn-text); font-size: 13px; font-weight: 500; line-height: 1.35; letter-spacing: -.008em; }
@@ -404,6 +440,8 @@
 .zs-row.is-drop-below::after { bottom: -1px; }
 .zs-row.is-slider { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--zn-3); }
 .zs-row.is-slider .zs-slider { grid-column: 1 / -1; }
+.zs-row.is-picker { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--zn-3); }
+.zs-row.is-picker .zs-dockpick { grid-column: 1 / -1; }
 
 /* ── Workspaces as cards ────────────────────────────────────────────────────
    Each card previews the wheel: the real icons in the real positions. The grid adapts to
@@ -618,17 +656,28 @@
 /* ── Select (trigger in the row, listbox in a portal) ───────────────────── */
 
 .zs-select { position: relative; display: inline-flex; align-items: center; min-width: 0; }
-/* Sized and coloured as the segmented control's resting state, because that is what it replaced
-   on this row — the control should not change weight just because the option count grew. */
-.zs-select-trigger {
-  max-width: 100%; height: 30px;
+/*
+   Scoped `.zs-shell .zs-select-trigger`, exactly as `.zs-shell .zs-btn` above is, and for the same
+   reason: `.zs-shell button` resets `font: inherit`, and that shorthand takes size, weight AND
+   line-height with it. A bare `.zs-select-trigger` loses to it on specificity — class (0,1,0)
+   against class-plus-type (0,1,1) — so the trigger silently rendered at the inherited 16px while
+   its own `font-size: 12px` sat in the stylesheet being ignored. Every control in this file that
+   states its own typography carries the same guard.
+
+   The values are `.zs-btn`'s, not new ones. This is a row control that displays a chosen value,
+   which is what `.zs-btn.is-value` already is, so it takes that height and that type or the
+   Language row reads a size apart from every other row in the panel. */
+.zs-shell .zs-select-trigger {
+  max-width: 100%; height: var(--zn-ctl);
   display: inline-flex; align-items: center; gap: var(--zn-2);
   padding-inline: var(--zn-3);
   color: var(--zn-text); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control);
   background: var(--zn-sunken); cursor: pointer;
-  font-size: 12px; font-weight: 450; line-height: 1; white-space: nowrap;
+  font: 450 11.5px/1.2 var(--font-ui); white-space: nowrap;
   transition: color .15s var(--zn-ease), background .15s var(--zn-ease), box-shadow .15s var(--zn-ease);
 }
+/* The chosen language carries the emphasis, the same way `.zs-btn.is-value b` does. */
+.zs-shell .zs-select-trigger > span { color: var(--zn-text); font-weight: 500; }
 .zs-select-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .zs-select-trigger > svg { flex: none; color: var(--zn-text-3); transition: rotate .18s var(--zn-ease), color .15s var(--zn-ease); }
 .zs-select-trigger:hover { background: var(--zn-hover); box-shadow: inset 0 0 0 1px var(--zn-line-strong); }
@@ -639,10 +688,10 @@
 .zs-select-trigger.is-open > svg { rotate: 180deg; color: var(--zn-text-2); }
 
 /* Transparent, full-bleed, and only there to catch the click that dismisses. */
-.zs-select-shade { position: fixed; inset: 0; z-index: 60; }
+.zs-select-shade { position: absolute; inset: 0; z-index: 60; }
 
 .zs-select-list {
-  position: fixed; z-index: 61;
+  position: absolute; z-index: 61;
   max-height: 320px; overflow-y: auto; overscroll-behavior: contain;
   padding: var(--zn-1); margin: 0;
   border-radius: var(--zn-r-panel); background: var(--zn-surface);
@@ -655,17 +704,17 @@
 
 .zs-select-option {
   display: flex; align-items: center; gap: var(--zn-2);
-  min-height: 34px; padding: var(--zn-2) var(--zn-3);
+  min-height: var(--zn-ctl); padding: var(--zn-2) var(--zn-3);
   border-radius: var(--zn-r-chip); cursor: pointer;
   color: var(--zn-text-2);
 }
-.zs-select-option > b { min-width: 0; flex: none; color: var(--zn-text); font-size: 12.5px; font-weight: 500; }
+.zs-select-option > b { min-width: 0; flex: none; color: var(--zn-text); font: 500 11.5px/1.2 var(--font-ui); }
 /* The English name is support, not a second label: it recedes, and it is the part that gives way
    when the row runs out of width. */
 .zs-select-option > small {
   min-width: 0; flex: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--zn-text-3); font-size: 11px;
+  color: var(--zn-text-3); font: 450 11px/1.2 var(--font-ui);
 }
 .zs-select-option > svg { flex: none; margin-inline-start: auto; color: var(--zn-solid); }
 .zs-select-option.is-active { background: var(--zn-hover); }
@@ -697,6 +746,45 @@
 .zs-slider input[type="range"]:active::-webkit-slider-thumb { transform: scale(.94); }
 .zs-slider-bounds { color: var(--zn-text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
 .zs-readout { min-width: 58px; color: var(--zn-text); font: 500 12.5px/1 var(--font-display); font-variant-numeric: tabular-nums; text-align: right; }
+/* A word-free readout: the picture below says where, so the right column only has to name it. */
+.zs-readout.is-place { min-width: 0; font-variant-numeric: normal; }
+
+/* ── Where a dock sits, as the screen it sits on ─────────────────────────────
+   Six regions drawn where they actually are. The box is the monitor, the ring in the middle is the
+   wheel, and each strip is a dock in miniature — so the setting is answered by pointing rather than
+   by translating "Bottom center" back into a corner. */
+.zs-dockpick {
+  position: relative; display: grid;
+  grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr);
+  /* The monitor's proportions, so a corner in the picture is the corner on screen. */
+  aspect-ratio: 16 / 9; width: 100%; max-width: 268px; padding: 9px;
+  border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: var(--zn-sunken);
+}
+.zs-dockpick-wheel {
+  position: absolute; top: 50%; left: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+  border: 1px dashed var(--zn-line-strong); border-radius: 50%; opacity: .7;
+}
+.zs-dockpick-cell {
+  display: grid; place-items: center; width: 46px; height: 18px; padding: 0;
+  border: 1px solid transparent; border-radius: 5px; background: transparent;
+  cursor: pointer; transition: background .13s var(--zn-ease), border-color .13s var(--zn-ease);
+}
+.zs-dockpick-cell.is-top { grid-row: 1; align-self: start; }
+.zs-dockpick-cell.is-bottom { grid-row: 2; align-self: end; }
+.zs-dockpick-cell.is-left { grid-column: 1; justify-self: start; }
+.zs-dockpick-cell.is-center { grid-column: 2; justify-self: center; }
+.zs-dockpick-cell.is-right { grid-column: 3; justify-self: end; }
+.zs-dockpick-cell:hover { border-color: var(--zn-line); background: var(--zn-hover); }
+.zs-dockpick-cell.is-selected { border-color: var(--zn-solid); background: var(--zn-raised); }
+/* The strip: three tiles, the shape of the dock this region would hold. */
+.zs-dockpick-strip { display: flex; gap: 3px; opacity: .45; }
+.zs-dockpick-strip i { width: 8px; height: 8px; border-radius: 2px; background: var(--zn-text-3); }
+.zs-dockpick-cell.is-selected .zs-dockpick-strip { opacity: 1; }
+.zs-dockpick-cell.is-selected .zs-dockpick-strip i { background: var(--zn-solid); }
+/* The other dock is already here. Stated, not forbidden: a shared region stacks, and the wheel
+   draws it correctly — this only stops it happening by accident. */
+.zs-dockpick-cell.is-shared:not(.is-selected) { border-color: var(--zn-line); border-style: dashed; }
+.zs-dockpick-cell.is-shared .zs-dockpick-strip { opacity: .75; }
 
 /* ── Editor (the only real modal) ───────────────────────────────────────── */
 
@@ -715,6 +803,74 @@
 .zs-editor header > button { width: var(--zn-ctl-sm); height: var(--zn-ctl-sm); flex: none; display: grid; place-items: center; padding: 0; color: var(--zn-text-3); border: 0; border-radius: var(--zn-r-chip); background: transparent; cursor: pointer; }
 .zs-editor header > button:hover { color: var(--zn-text); background: var(--zn-raised); }
 .zs-editor-body { min-height: 0; overflow-y: auto; padding: 0 var(--zn-5) var(--zn-5); }
+
+/* The close button and, on a workspace, the Visual / File switch beside it. */
+.zs-editor-head-actions { flex: none; display: flex; align-items: center; gap: var(--zn-2); }
+.zs-editor .zs-editor-close { width: var(--zn-ctl-sm); height: var(--zn-ctl-sm); flex: none; display: grid; place-items: center; padding: 0; color: var(--zn-text-3); border: 0; border-radius: var(--zn-r-chip); background: transparent; cursor: pointer; }
+.zs-editor .zs-editor-close:hover { color: var(--zn-text); background: var(--zn-raised); }
+.zs-view-toggle { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: var(--zn-sunken); }
+.zs-view-toggle button {
+  position: relative; display: grid; place-items: center; width: 28px; height: 24px; padding: 0;
+  border: 0; border-radius: calc(var(--zn-r-control) - 3px); background: transparent; color: var(--zn-text-3); cursor: pointer;
+  transition: color .15s var(--zn-ease), background .15s var(--zn-ease);
+}
+.zs-view-toggle button:hover { color: var(--zn-text); }
+.zs-view-toggle button.is-selected { color: var(--zn-text); background: var(--zn-raised); box-shadow: inset 0 0 0 1px var(--zn-line); }
+/* Tips hang below and to the LEFT: these sit at the right edge of a dialog that clips its overflow. */
+.zs-view-toggle button[data-tip]::after,
+.zs-file-icon-btn[data-tip]::after {
+  content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  width: max-content; max-width: 200px; padding: 5px 8px;
+  border: 1px solid var(--zn-line); border-radius: var(--zn-r-chip);
+  background: var(--zn-surface); color: var(--zn-text);
+  font: 400 11px/1.35 var(--font-ui); white-space: nowrap;
+  opacity: 0; pointer-events: none; transform: translateY(-3px);
+  transition: opacity .12s var(--zn-ease), transform .12s var(--zn-ease);
+}
+.zs-view-toggle button[data-tip]:hover::after,
+.zs-view-toggle button[data-tip]:focus-visible::after,
+.zs-file-icon-btn[data-tip]:hover::after,
+.zs-file-icon-btn[data-tip]:focus-visible::after { opacity: 1; transform: translateY(0); }
+
+/* ── Workspace as a file ── */
+.zs-editor-body.is-file { display: flex; flex-direction: column; overflow: hidden; }
+.zs-file-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--zn-2); }
+.zs-file-toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--zn-3); }
+.zs-file-name { display: inline-flex; align-items: center; gap: 6px; color: var(--zn-text-2); font: 500 11.5px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.zs-file-name i { width: 7px; height: 7px; border-radius: 50%; background: var(--zn-text-2); }
+.zs-file-actions { display: flex; align-items: center; gap: var(--zn-2); }
+.zs-file-icon-btn {
+  position: relative; display: grid; place-items: center; width: var(--zn-ctl); height: var(--zn-ctl); padding: 0;
+  border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: transparent; color: var(--zn-text-2); cursor: pointer;
+  transition: color .15s var(--zn-ease), border-color .15s var(--zn-ease), background .15s var(--zn-ease);
+}
+.zs-file-icon-btn:hover { color: var(--zn-text); border-color: var(--zn-line-strong); background: var(--zn-raised); }
+.zs-file-code {
+  flex: 1; min-height: 320px; display: flex; overflow: hidden;
+  border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: var(--zn-sunken);
+  font: 400 12px/18px ui-monospace, "Cascadia Code", SFMono-Regular, Consolas, monospace;
+}
+.zs-file-code:focus-within { border-color: var(--zn-line-strong); }
+.zs-file-code.has-error { border-color: rgba(239, 124, 124, .55); }
+.zs-file-gutter {
+  flex: none; overflow: hidden; padding: 10px 8px 10px 12px; min-width: 44px;
+  color: var(--zn-text-3); text-align: right; user-select: none; border-right: 1px solid var(--zn-line);
+}
+.zs-file-gutter span { display: block; height: 18px; }
+.zs-file-gutter span.is-error { color: #ef7c7c; font-weight: 600; }
+.zs-editor .zs-file-code textarea {
+  flex: 1; min-width: 0; margin: 0; padding: 10px 12px; resize: none; overflow: auto;
+  border: 0; outline: none; background: transparent; color: var(--zn-text);
+  font: inherit; white-space: pre; tab-size: 2; caret-color: var(--zn-text);
+}
+.zs-editor .zs-file-error {
+  flex: none; display: flex; align-items: flex-start; gap: var(--zn-2); width: 100%; padding: 8px 10px;
+  border: 1px solid rgba(239, 124, 124, .45); border-radius: var(--zn-r-control); background: rgba(239, 124, 124, .09);
+  color: #f29a9a; font: 400 11.5px/1.45 var(--font-ui); text-align: left; cursor: pointer;
+}
+.zs-editor .zs-file-error svg { flex: none; margin-top: 2px; }
+.zs-editor .zs-file-error b { font-weight: 600; margin-right: 4px; }
+.zs-file-hint { flex: none; margin: 0; color: var(--zn-text-3); font-size: 11px; line-height: 1.45; }
 .zs-license-card { position: relative; overflow: hidden; border: 1px solid var(--zn-line); border-radius: 14px; padding: 20px; background: linear-gradient(145deg, rgba(255,255,255,.065), rgba(255,255,255,.018) 56%, rgba(255,255,255,.04)); box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 20px 42px rgba(0,0,0,.22); }
 .zs-license-card::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 89% 8%, rgba(255,255,255,.12), transparent 28%); }
 .zs-license-orbit { position: absolute; right: -29px; top: -31px; width: 118px; height: 118px; border: 1px solid rgba(255,255,255,.13); border-radius: 50%; opacity: .72; }
@@ -839,7 +995,9 @@
   background: var(--zn-scrim); backdrop-filter: blur(8px);
 }
 .zs-icon-modal {
-  width: min(560px, 100%); max-height: min(560px, 100%);
+  /* A fixed height, not a ceiling: the Glyph and Picture tabs are different lengths, and a modal
+     that resized on every switch would move the tabs out from under the pointer. */
+  width: min(560px, 100%); height: min(560px, 100%);
   display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--zn-line); border-radius: var(--zn-r-panel);
   background: var(--zn-surface); box-shadow: 0 28px 60px rgba(0, 0, 0, .38);
@@ -857,7 +1015,110 @@
   background: transparent; cursor: pointer;
 }
 .zs-icon-modal > header > button:hover { color: var(--zn-text); background: var(--zn-raised); }
-.zs-icon-modal-body { min-height: 0; overflow-y: auto; padding: 0 var(--zn-5) var(--zn-5); }
+.zs-icon-modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--zn-5) var(--zn-5); }
+.zs-icon-modal-tabs { flex: none; padding: 0 var(--zn-5) var(--zn-3); }
+.zs-icon-modal-tabs .zs-segmented button { gap: 6px; }
+
+/* The chosen name and the button that ends the choice — the same footer as `.zs-editor`,
+   with the current pick spelled out on the left so the modal says what it is about to leave set. */
+.zs-icon-modal > footer {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  gap: var(--zn-4); padding: var(--zn-3) var(--zn-5); border-top: 1px solid var(--zn-line);
+}
+.zs-icon-modal-pick {
+  min-width: 0; display: flex; align-items: center; gap: var(--zn-2);
+  color: var(--zn-text-3); font-size: 11.5px;
+}
+.zs-icon-modal-pick svg { flex: none; color: var(--zn-text-2); }
+.zs-icon-modal-pick img { flex: none; width: 18px; height: 18px; object-fit: contain; }
+.zs-icon-modal-pick b {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--zn-text); font-weight: 550;
+}
+.zs-icon-modal > footer .zs-btn { flex: none; min-width: 84px; justify-content: center; }
+/* "Default" sits beside "Done" rather than in the corner opposite it: both end the choice,
+   and putting the discard on the far left read as a second, unrelated control. */
+.zs-icon-modal-acts { flex: none; display: flex; align-items: center; gap: var(--zn-2); }
+
+/* The workspace's own picture, in the square its glyph otherwise fills. */
+.zs-workspace-icon-img { width: 30px; height: 30px; object-fit: contain; }
+
+/* ── Picture tab ─────────────────────────────────────────────────────────────
+   A drop zone with the icon in force beside it, the system libraries as chips, and the icons of
+   whichever library is open as a grid. */
+.zs-custom-icon { display: flex; flex-direction: column; gap: var(--zn-3); }
+.zs-custom-icon-note { margin: 0; color: var(--zn-text-3); font-size: 11.5px; }
+/* Dashed like `.zs-folder-picker`: a place waiting for something to be put in it. */
+.zs-custom-icon-drop {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: var(--zn-4);
+  padding: var(--zn-4); border: 1px dashed var(--zn-line-strong); border-radius: var(--zn-r-control);
+  background: var(--zn-sunken);
+  transition: border-color .15s var(--zn-ease), background .15s var(--zn-ease);
+}
+.zs-custom-icon-drop.is-over { border-color: var(--zn-focus); background: var(--zn-hover); }
+.zs-custom-icon-preview {
+  width: 72px; height: 72px; display: grid; place-items: center;
+  color: var(--zn-text-3); border-radius: var(--zn-r-control); background: var(--zn-raised);
+}
+.zs-custom-icon-preview img { width: 56px; height: 56px; object-fit: contain; }
+.zs-custom-icon-copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.zs-custom-icon-copy b { color: var(--zn-text); font-size: 12px; font-weight: 550; }
+.zs-custom-icon-copy small { color: var(--zn-text-3); font-size: 10.5px; line-height: 1.45; }
+.zs-custom-icon-copy .zs-btn { margin-top: var(--zn-2); }
+/* Red in the `.zs-crowding.is-warning` register: this one did not work, and says why. */
+.zs-custom-icon-error {
+  display: grid; grid-template-columns: 13px minmax(0, 1fr); align-items: start; gap: var(--zn-2);
+  margin: 0; padding: var(--zn-2) var(--zn-3);
+  border: 1px solid rgba(239, 124, 124, .3); border-radius: var(--zn-r-chip);
+  background: rgba(239, 124, 124, .08); color: rgba(244, 168, 168, .95);
+  font-size: 10.5px; line-height: 1.5;
+}
+.zs-custom-icon-error svg { margin-top: 1px; }
+[data-zn-theme="white"] .zs-custom-icon-error {
+  border-color: rgba(165, 32, 32, .3); background: rgba(165, 32, 32, .07); color: rgba(124, 24, 24, .95);
+}
+.zs-custom-icon-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--zn-1); }
+.zs-custom-icon-sources > span { margin-right: var(--zn-2); color: var(--zn-text-3); font-size: 10.5px; }
+/* The same chip as `.zs-add-actions`, which is what these are: places to start from. */
+.zs-custom-icon-sources button {
+  height: 26px; padding-inline: 9px;
+  color: var(--zn-text-2); border: 1px solid var(--zn-line); border-radius: var(--zn-r-chip); background: transparent; cursor: pointer;
+  font-size: 10.5px; line-height: 1; transition: color .15s var(--zn-ease), background .15s var(--zn-ease), border-color .15s var(--zn-ease);
+}
+.zs-custom-icon-sources button:hover:not(:disabled),
+.zs-custom-icon-sources button.is-active { color: var(--zn-text); border-color: var(--zn-line-strong); background: var(--zn-raised); }
+.zs-custom-icon-sources button:disabled { cursor: progress; opacity: .6; }
+.zs-custom-icon-library-head { display: flex; align-items: baseline; gap: var(--zn-2); margin-bottom: var(--zn-2); }
+.zs-custom-icon-library-head b { color: var(--zn-text); font-size: 11.5px; font-weight: 550; }
+.zs-custom-icon-library-head small { color: var(--zn-text-3); font-size: 10.5px; }
+/* Fixed cells, a column count that follows the width — the glyph grid's rule. */
+.zs-custom-icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); grid-auto-rows: 44px; gap: var(--zn-1); }
+.zs-custom-icon-grid button {
+  display: grid; place-items: center; padding: 0;
+  color: var(--zn-text-3); border: 1px solid transparent; border-radius: var(--zn-r-chip); background: var(--zn-sunken); cursor: pointer;
+  transition: border-color .15s var(--zn-ease), background .15s var(--zn-ease);
+}
+.zs-custom-icon-grid button:hover { border-color: var(--zn-line-strong); background: var(--zn-hover); }
+.zs-custom-icon-grid button.is-selected { border-color: var(--zn-focus); background: var(--zn-raised); }
+.zs-custom-icon-grid img { width: 32px; height: 32px; object-fit: contain; }
+
+/* The icon row in a shortcut's editor: the glyph in the same chip the list row uses, its name,
+   and a pencil. Solid border, unlike `.zs-folder-picker`'s dashed one — there is always a value
+   here, so nothing is waiting to be filled in. */
+.zs-icon-field-button {
+  min-width: 0; min-height: var(--zn-ctl); display: grid; grid-template-columns: 30px minmax(0, 1fr) 16px;
+  align-items: center; gap: var(--zn-2); padding: var(--zn-2);
+  color: var(--zn-text-2); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control);
+  background: var(--zn-sunken); cursor: pointer; text-align: left;
+  transition: color .15s var(--zn-ease), border-color .15s var(--zn-ease), background .15s var(--zn-ease);
+}
+.zs-icon-field-button:hover { color: var(--zn-text); border-color: var(--zn-line-strong); background: var(--zn-hover); }
+.zs-icon-field-button > div { min-width: 0; }
+.zs-icon-field-button b, .zs-icon-field-button small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.zs-icon-field-button b { color: var(--zn-text); font-size: 11.5px; font-weight: 500; }
+.zs-icon-field-button small { margin-top: 2px; color: var(--zn-text-3); font-size: 9.5px; }
+.zs-icon-field-button > svg { justify-self: end; color: var(--zn-text-3); }
+.zs-icon-field-button:hover > svg { color: var(--zn-text-2); }
 
 .zs-workspace-shortcuts { min-width: 0; }
 .zs-workspace-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--zn-4); margin-bottom: var(--zn-3); }
@@ -884,8 +1145,6 @@
 .zs-add-panel { margin-bottom: var(--zn-3); padding: var(--zn-3); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: var(--zn-sunken); }
 .zs-add-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--zn-2); margin-bottom: var(--zn-2); }
 .zs-search.is-manager-search { flex: 1 1 180px; min-width: 140px; background: var(--zn-surface); }
-.zs-search.is-manager-search input:focus,
-.zs-search.is-manager-search input:focus-visible { outline: 0; box-shadow: none; }
 .zs-installed-apps { min-height: 132px; max-height: min(320px, 38vh); overflow-y: auto; padding-right: 2px; scrollbar-gutter: stable; overscroll-behavior: contain; }
 .zs-installed-apps > button {
   width: 100%; min-height: 42px; display: grid; grid-template-columns: 28px minmax(0, 1fr) 20px; align-items: center; gap: var(--zn-2); padding: 5px var(--zn-2);
@@ -921,7 +1180,8 @@
 }
 .zs-shell[dir="rtl"] .zs-installed-apps > button,
 .zs-shell[dir="rtl"] .zs-nav button,
-.zs-shell[dir="rtl"] .zs-folder-picker {
+.zs-shell[dir="rtl"] .zs-folder-picker,
+.zs-shell[dir="rtl"] .zs-icon-field-button {
   text-align: right;
 }
 .zs-shell[dir="rtl"] .zs-search input {
@@ -929,6 +1189,11 @@
 }
 
 .zs-add-form { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr) auto; align-items: end; gap: var(--zn-3); }
+.zs-add-form.is-command { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.zs-add-form.is-command > .zs-field.is-wide,
+.zs-add-form.is-command > .zs-command-options { grid-column: 1 / -1; }
+.zs-add-form.is-command > .zs-btn { grid-column: 1 / -1; justify-self: end; }
+.zs-command-options { row-gap: var(--zn-2); }
 .zs-folder-picker { min-width: 0; min-height: 54px; display: grid; grid-template-columns: 28px minmax(0, 1fr) 18px; align-items: center; gap: var(--zn-2); padding: var(--zn-2); color: var(--zn-text-2); border: 1px dashed var(--zn-line-strong); border-radius: var(--zn-r-control); background: var(--zn-surface); cursor: pointer; text-align: left; }
 .zs-folder-picker:hover { color: var(--zn-text); background: var(--zn-hover); }
 .zs-folder-picker div { min-width: 0; }
@@ -937,7 +1202,20 @@
 .zs-folder-picker small { margin-top: 2px; color: var(--zn-text-3); font-size: 9.5px; }
 
 .zs-workspace-items { overflow: hidden; border-top: 1px solid var(--zn-line); }
-.zs-workspace-item { border-bottom: 1px solid var(--zn-line); }
+/* The card below assembles at the pace the editor opens. Snapping its margin, inset, corners and
+   wash into place while the form underneath eased open read as two separate things happening to
+   the same row. (The border's own 1px is not in the list: width has no in-between worth easing.) */
+.zs-workspace-item {
+  border-bottom: 1px solid transparent;
+  transition: margin var(--zn-collapse) var(--zn-ease),
+              padding-inline var(--zn-collapse) var(--zn-ease),
+              border-color var(--zn-collapse) var(--zn-ease),
+              border-radius var(--zn-collapse) var(--zn-ease),
+              background var(--zn-collapse) var(--zn-ease);
+}
+/* With no divider under each row, the hover wash is what marks the row's extent — the same
+   affordance the installed-apps list beside it already uses. */
+.zs-workspace-item:not(.is-editing):hover { background: var(--zn-hover); }
 /* While editing the row becomes a card. Before it was only a full-width background wash: a
    rectangle with no outline that butted against the neighbouring rows and did not say where
    the editable zone started or ended. The 4px inner inset adds to the header's and the
@@ -991,6 +1269,17 @@
 .zs-workspace-item-copy > b { color: var(--zn-text); font-size: 11.5px; font-weight: 500; }
 .zs-workspace-item-copy > small { margin-top: 3px; color: var(--zn-text-3); font-size: 9.5px; }
 .zs-workspace-item-copy em { color: var(--zn-text-2); font-style: normal; }
+/* The dock list renames in place: there is nothing else to edit on a dock icon, so an expanding
+   editor card for one field would be a whole panel to open and close for a word. It sits exactly
+   where the workspace list's `<b>` does, and only looks like a field once it is reached for. */
+.zs-dock-name-input {
+  display: block; width: 100%; padding: 2px 4px; margin: -2px -4px;
+  color: var(--zn-text); font: inherit; font-size: 11.5px; font-weight: 500;
+  border: 1px solid transparent; border-radius: var(--zn-r-chip); background: transparent;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.zs-dock-name-input:hover { border-color: var(--zn-line); }
+.zs-dock-name-input:focus { outline: none; border-color: var(--zn-solid); background: var(--zn-raised); }
 .zs-item-actions { display: flex; gap: 2px; opacity: .7; transition: opacity .15s var(--zn-ease); }
 .zs-workspace-item:hover .zs-item-actions, .zs-workspace-item.is-editing .zs-item-actions { opacity: 1; }
 .zs-item-actions button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; color: var(--zn-text-3); border: 0; border-radius: var(--zn-r-chip); background: transparent; cursor: pointer; }
@@ -1006,6 +1295,7 @@
 /* A file path is long and the button that swaps it has to fit beside it — this is the only
    field in the editor that wants the whole width. */
 .zs-workspace-item-editor > .zs-field.is-with-action { max-width: none; }
+.zs-workspace-item-editor > .zs-field.is-wide { max-width: none; }
 .zs-field-row { display: flex; align-items: center; gap: var(--zn-2); }
 .zs-field-row input { min-width: 0; flex: 1; }
 .zs-field-row .zs-btn { flex: none; }
@@ -1067,7 +1357,8 @@
 .zs-ide-options-head { border-bottom: 1px solid var(--zn-line); background: var(--zn-sunken); }
 .zs-ide-options-head b, .zs-ide-toggle-row b, .zs-ide-commands-head b { display: block; color: var(--zn-text); font-size: 11.5px; font-weight: 550; }
 .zs-ide-options-head small, .zs-ide-toggle-row small, .zs-ide-commands-head small { display: block; margin-top: 2px; color: var(--zn-text-3); font-size: 9.5px; line-height: 1.4; }
-.zs-ide-toggle-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--zn-3); border-bottom: 1px solid var(--zn-line); }
+.zs-ide-toggle-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--zn-3); }
+.zs-ide-toggle-row + .zs-ide-commands { border-top: 1px solid var(--zn-line); }
 .zs-ide-commands-head { display: flex; align-items: center; justify-content: space-between; gap: var(--zn-3); }
 .zs-command-row { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 4px; margin-top: var(--zn-2); }
 .zs-command-row input { min-width: 0; height: 30px; padding: 0 var(--zn-2); color: var(--zn-text); border: 1px solid var(--zn-line); border-radius: var(--zn-r-chip); background: var(--zn-sunken); font: 450 10.5px/1 var(--font-ui); outline: 0; }
@@ -1159,11 +1450,7 @@
    Above the settings surface and below the fault card: an error still has to be readable, even on
    the first launch that produced it. */
 .zs-firstrun-layer {
-  /* fixed, not absolute: the settings layout can run taller than the viewport (it did on
-   * Wayland/Electron 44), and an absolutely-positioned layer then centers the dialog in a box
-   * whose top and bottom are both off-screen — clipping the heading and pushing the footer
-   * button half outside the card */
-  position: fixed; inset: var(--zenith-title-bar-h) 0 0; z-index: 60;
+  position: absolute; inset: var(--zenith-title-bar-h) 0 0; z-index: 60;
   display: grid; place-items: center; padding: var(--zn-6);
   background: rgba(6, 7, 9, .72);
 }
@@ -1482,7 +1769,8 @@
  */
 .zn-radial--nocursor .zn-radial-slice *,
 .zn-radial--nocursor .zn-radial-hub,
-.zn-radial--nocursor [data-zn-radial-center] {
+.zn-radial--nocursor [data-zn-radial-center],
+.zn-radial--nocursor .zn-radial-update-badge {
   pointer-events: none !important;
 }
 
@@ -1493,6 +1781,295 @@
   --zn-dur: 220ms;
   --zn-dur-op: 165ms;
 }
+
+/* The corner gear: the HUD pill's plate, sized for a single glyph. It carries
+   `zn-radial-pill` too, so it enters and leaves with the rest of the wheel. */
+.zn-radial-gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(8, 8, 10, 0.72);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  /* The whole shorthand, like `.zn-radial-hub`: this rule comes after the shared one, so a
+     partial declaration here would drop the enter/exit transform and opacity. */
+  transition:
+    transform var(--zn-dur, 220ms) var(--zn-ease, cubic-bezier(.2, .82, .28, 1)),
+    opacity var(--zn-dur-op, 175ms) ease-out,
+    background-color 140ms ease-out,
+    border-color 140ms ease-out,
+    color 140ms ease-out;
+}
+
+/* The hub's update badge lifts under the pointer — the only cue that it is a button. */
+.zn-radial-update-badge {
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition:
+    transform 160ms cubic-bezier(.2, .82, .28, 1),
+    box-shadow 160ms ease-out,
+    background-color 160ms ease-out;
+}
+
+.zn-radial-update-badge:hover {
+  transform: translateY(-2px) scale(1.12);
+  background-color: #2B95FF !important;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.55), 0 0 10px rgba(10, 132, 255, 0.45);
+}
+
+.zn-radial-update-badge:active {
+  transform: translateY(0) scale(1.02);
+}
+
+.zn-radial-gear:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(20, 20, 24, 0.88);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+
+/* ── The corner docks ────────────────────────────────────────────────────────
+   Two strips beside the open wheel: the user's own icons, and the machine's
+   readouts. Everything here is sized from inline styles the settings panel
+   drives (icon size, gap); the rules below own only the plate, the states and
+   the type, so that one slider moves a whole strip coherently.
+
+   No `backdrop-filter` anywhere. The overlay is a transparent HWND on Windows,
+   so there is nothing underneath for it to sample — the plates carry their own
+   background, exactly as the HUD pill and the corner gear do. */
+
+.zn-dock-shell {
+  position: fixed;
+  z-index: 12;
+  display: flex;
+  /* The shell spans the edge it is pinned to; `justify-*` from the region class
+     puts the stack at the left, the middle or the right of it. */
+  padding: 20px;
+  pointer-events: none;
+  color: #fff;
+}
+
+.zn-dock-stack {
+  display: flex;
+  flex-direction: column;
+  max-width: min(92vw, 1100px);
+}
+
+.zn-dock-plate {
+  display: flex;
+  align-items: center;
+  /* A strip longer than the screen wraps rather than running off it: a dock of
+     twenty shortcuts on a laptop is a thing people will build. */
+  flex-wrap: wrap;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(8, 8, 10, 0.72);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  line-height: 1;
+}
+
+/* One readout, or one launchable icon. Buttons, because they are pressed. */
+.zn-dock-icon-button,
+.zn-dock-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  padding: 4px 6px;
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  font: inherit;
+  transition:
+    background-color 130ms ease-out,
+    border-color 130ms ease-out,
+    color 130ms ease-out;
+}
+
+.zn-dock-icon-button:hover,
+.zn-dock-tile:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.zn-dock-icon-button:active,
+.zn-dock-tile:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.zn-dock-readout {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.zn-dock-idle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+}
+
+/* ── Clock ─────────────────────────────────────────────────────────────────── */
+
+.zn-dock-clock {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.zn-dock-clock-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.zn-dock-clock-date {
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ── Battery ───────────────────────────────────────────────────────────────── */
+
+/* Drawn rather than glyphed: what a person reads off a battery is the fill, and
+   a Lucide outline is a fixed level. The nub on the right is the ::after. */
+.zn-dock-battery {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  border-radius: 4px;
+  padding: 1.5px;
+  overflow: visible;
+}
+
+.zn-dock-battery::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 2px;
+  height: 40%;
+  transform: translateY(-50%);
+  border-radius: 0 2px 2px 0;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.zn-dock-battery-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.9);
+  transition: width 400ms ease-out;
+}
+
+/* Outlined, not filled: the bolt sits over the dark empty part of the meter at 8% and over the
+   bright fill at 95%, and one flat colour vanishes into one of them. `paint-order: stroke` puts
+   the dark halo behind the white body rather than through the middle of it. */
+.zn-dock-battery-bolt {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  fill: #ffffff;
+  stroke: rgba(0, 0, 0, 0.7);
+  stroke-width: 3;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+}
+
+/* ── Volume ────────────────────────────────────────────────────────────────── */
+
+.zn-dock-volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A 5px rail with a 23px hit area. The padding is the difference, and it is
+   `content-box` on purpose — the preflight makes everything border-box, which
+   would have eaten the padding and left a rail nobody can hit with a mouse. */
+.zn-dock-volume-track {
+  position: relative;
+  flex: none;
+  box-sizing: content-box;
+  height: 5px;
+  padding: 9px 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* The rail itself, so the hit area above and below it stays invisible. */
+.zn-dock-volume-track::before {
+  content: "";
+  position: absolute;
+  inset: 9px 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.zn-dock-volume-track.is-idle {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* Positioned, or the absolutely-positioned rail above would paint over it. */
+.zn-dock-volume-fill {
+  position: relative;
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* ── Shortcut tiles ────────────────────────────────────────────────────────── */
+
+.zn-dock-tile {
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+}
+
+.zn-dock-tile-art {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.zn-dock-tile-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.zn-dock-tile-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* `performanceMode` and the wheel's closing state already retune `.zn-radial-pill`,
+   which the stack carries — so the docks leave on the same curve as everything else. */
 
 /* `performanceMode`: same drawing, no overshoot and shorter. */
 .zn-radial--fast .zn-radial-slice,
@@ -1521,6 +2098,34 @@
   .zn-radial-label,
   .zn-radial-pill,
   .zn-radial-scrim { transition-duration: .01ms !important; }
+}
+
+/* ── Area targeting: the wheel's plane, cut into equal shares ───────────────
+   The layer fades with the wheel (`--zn-op`, like every other piece of radial
+   furniture); the wedge under the aim is a plain `opacity` swap on a path that
+   is already in the tree. Both are compositor-only, which is what lets a
+   full-screen SVG sit under a wheel that has to answer the mouse every frame.
+
+   The crossfade is deliberately slower than the tile's highlight: the wedge is
+   a large, soft area and a fast swap on that much surface reads as a flicker,
+   where the same duration on a 60px tile reads as crisp. */
+.zn-radial-sectors {
+  opacity: var(--zn-op, 1);
+  transition: opacity var(--zn-dur-op, 175ms) ease-out;
+  will-change: opacity;
+}
+
+.zn-radial-sector {
+  transition: opacity 130ms ease-out;
+}
+
+.zn-radial--fast .zn-radial-sectors { --zn-dur-op: 90ms; }
+.zn-radial--fast .zn-radial-sector { transition-duration: 70ms; }
+.zn-radial--closing .zn-radial-sectors { --zn-dur-op: 100ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .zn-radial-sectors,
+  .zn-radial-sector { transition-duration: .01ms !important; }
 }
 
 /* ══ Launch echo ════════════════════════════════════════════════════════════

@@ -1,9 +1,16 @@
 /**
  * Guards the JS the radial wheel has to parse before it can paint.
  *
- * That is not one file. `dist/index.html` loads the entry chunk plus everything it modulepreloads
- * — react-vendor, motion, the rolldown runtime — all statically imported, all parsed before the
- * first frame. Settings and the full Lucide set are the async chunks, and they are excluded.
+ * That is `dist/radial.html` — the wheel's own document since it moved into its own window. It
+ * loads the entry chunk plus everything it modulepreloads (react-vendor, the rolldown runtime, the
+ * shared component chunk), all statically imported, all parsed before the first frame.
+ *
+ * Which file this reads is the load-bearing part. When one document served both surfaces, keeping
+ * the settings shell out of the wheel's critical path was a discipline enforced by `React.lazy` and
+ * by this script, and a single careless value import could undo it. Now they are separate rollup
+ * entries, so the settings shell, the icon picker and the locale tables are not merely deferred —
+ * they are unreachable from this graph. Pointing this check back at `index.html` would silently
+ * start measuring Settings instead, and the number would look fine while saying nothing.
  *
  * It has regressed silently before: a single `import * as icons from "lucide-react"` in
  * `src/iconMap.ts` put ~1,350 glyphs (4,059 exports, once Lucide's aliases are counted) in the
@@ -29,8 +36,20 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(root, "dist");
 
-/** Ceiling for all statically loaded JS, in bytes. It sits at ~288 kB; it was 806 kB before §3. */
-const CRITICAL_JS_BUDGET = 330 * 1024;
+/**
+ * Ceiling for all statically loaded JS, in bytes.
+ *
+ * It sits at ~284 kB; it was 288 kB when one document served both windows, and 806 kB before §3.
+ * The split is worth less here than it looks, and that is the honest reading: the wheel's critical
+ * path had already been cut to what it genuinely needs, so what separating the entries bought was
+ * not bytes but the guarantee that nobody can add them back by accident.
+ *
+ * The corner docks are what took it from ~267 kB: they are drawn beside the wheel, so `ScreenDocks`
+ * and the seven glyphs its readouts use are genuinely eager. The list that EDITS a dock is not —
+ * `DockShortcuts.tsx` is reachable only from the settings entry, which is why it is a module of its
+ * own rather than part of the component that draws them.
+ */
+const CRITICAL_JS_BUDGET = 300 * 1024;
 
 /**
  * Lucide glyphs allowed in the critical path. `CURATED_ICON_MAP` holds 282; the margin is there so
@@ -110,11 +129,23 @@ const LOCALES_THAT_MUST_STAY_LAZY = {
 
 const problems = [];
 
+/** The wheel's document — what the gesture waits on. */
 let html;
 try {
-  html = readFileSync(join(distDir, "index.html"), "utf8");
+  html = readFileSync(join(distDir, "radial.html"), "utf8");
 } catch {
-  console.error(`verify-renderer-budget: no build output at ${distDir} — run 'vite build' first`);
+  console.error(
+    `verify-renderer-budget: no build output at ${distDir}/radial.html — run 'vite build' first`,
+  );
+  process.exit(1);
+}
+
+/** Settings' document, checked only for the things that must not ship at all. */
+let settingsHtml;
+try {
+  settingsHtml = readFileSync(join(distDir, "index.html"), "utf8");
+} catch {
+  console.error(`verify-renderer-budget: no build output at ${distDir}/index.html`);
   process.exit(1);
 }
 
@@ -130,8 +161,24 @@ const criticalScripts = [
 const uniqueScripts = [...new Set(criticalScripts)];
 
 if (!uniqueScripts.length) {
-  console.error("verify-renderer-budget: found no module scripts in dist/index.html");
+  console.error("verify-renderer-budget: found no module scripts in dist/radial.html");
   process.exit(1);
+}
+
+/**
+ * The two documents have to stay two.
+ *
+ * Rollup emits one entry chunk per input, and if the wheel's document ever preloads the settings
+ * entry it means something in `RadialApp`'s graph reached `App.tsx` — the whole panel, in front of
+ * a gesture. The check is cheap and the failure it catches is invisible in every other way.
+ */
+const settingsEntry = [...settingsHtml.matchAll(/<script[^>]+type="module"[^>]+src="([^"]+)"/g)]
+  .map((match) => match[1].replace(/^\.?\//, ""))
+  .find((name) => name.includes("/index-"));
+if (settingsEntry && uniqueScripts.includes(settingsEntry)) {
+  problems.push(
+    `dist/radial.html loads the settings entry (${settingsEntry}) — the wheel's graph now reaches App.tsx`,
+  );
 }
 
 let totalBytes = 0;
@@ -219,9 +266,9 @@ if (!lazyIconChunk) {
   problems.push(
     "no _virtual_lucide-icon-set-*.js chunk was emitted — the icon picker's glyph set is no longer code-split",
   );
-} else if (html.includes(lazyIconChunk)) {
+} else if (html.includes(lazyIconChunk) || settingsHtml.includes(lazyIconChunk)) {
   problems.push(
-    `${lazyIconChunk} is referenced from dist/index.html — it is meant to be fetched on demand, not preloaded`,
+    `${lazyIconChunk} is referenced from a document's <head> — it is meant to be fetched on demand, not preloaded`,
   );
 }
 
@@ -255,6 +302,33 @@ if (missingFaces.length) {
   );
 }
 
+/**
+ * Controls that state their own typography have to outrank the shell's own reset.
+ *
+ * `.zs-shell button, input, textarea, select { font: inherit }` is a class-plus-type selector, so a
+ * bare `.zs-select-trigger { font-size: 12px }` loses to it — and loses silently, because the
+ * declaration is right there in the stylesheet looking correct while the button renders at the
+ * inherited 16px. That shipped once, on the language picker. Every control below states its own
+ * font and renders as one of those reset elements, so each must stay `.zs-shell`-scoped; the fix
+ * is to write `.zs-shell .zs-thing`, never to delete the name from this list.
+ */
+const SHELL_SCOPED_CONTROLS = [".zs-btn", ".zs-select-trigger"];
+
+for (const styleSheet of assetNames.filter((name) => name.endsWith(".css"))) {
+  const css = readFileSync(join(distDir, "assets", styleSheet), "utf8");
+  for (const control of SHELL_SCOPED_CONTROLS) {
+    const name = control.replace(/\./g, "\\.");
+    /** The rule carrying the typography is the one declaring the `font` shorthand. */
+    const scoped = new RegExp(`\\.zs-shell\\s+${name}\\{[^}]*font:`);
+    const unscoped = new RegExp(`(^|[,}])${name}\\{[^}]*font:`);
+    if (!scoped.test(css) && unscoped.test(css)) {
+      problems.push(
+        `${control} sets its own font with no .zs-shell scope in ${styleSheet} — the shell's "font: inherit" reset outranks a bare class, so it renders at the inherited base size`,
+      );
+    }
+  }
+}
+
 /** The same failure seen from the other side: an unresolved specifier left verbatim in the output. */
 for (const styleSheet of assetNames.filter((name) => name.endsWith(".css"))) {
   const css = readFileSync(join(distDir, "assets", styleSheet), "utf8");
@@ -285,5 +359,5 @@ if (problems.length) {
 }
 
 console.log(
-  `verify-renderer-budget: OK (${(totalBytes / 1024).toFixed(1)} kB critical JS in ${uniqueScripts.length} chunks, ${totalIcons} Lucide glyphs, ${(fontBytes / 1024).toFixed(1)} kB fonts in ${fontFiles.length} files, ${Object.keys(LOCALES_THAT_MUST_STAY_LAZY).length + 1} locales all lazy)`,
+  `verify-renderer-budget: OK (radial.html ${(totalBytes / 1024).toFixed(1)} kB critical JS in ${uniqueScripts.length} chunks, ${totalIcons} Lucide glyphs, ${(fontBytes / 1024).toFixed(1)} kB fonts in ${fontFiles.length} files, ${Object.keys(LOCALES_THAT_MUST_STAY_LAZY).length + 1} locales all lazy)`,
 );

@@ -1,19 +1,48 @@
 import React, { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react';
-import { Coordinates, AppItem, UIConfig, Workspace } from '../types';
+import { Coordinates, AppItem, SystemStatus, UIConfig, Workspace } from '../types';
 import { getIcon } from '../iconMap';
 import { CornerUpLeft } from 'lucide-react';
 import { SmartIcon } from './SmartIcon';
 import { RovylLogo } from './RovylLogo';
 import { uiString } from '../strings';
-import { RadialHud } from './RadialHud';
 import {
+  HUD_STATUS_HEIGHT,
+  RadialHud,
+  RadialSettingsCorner,
+  hudOccupiedRegion,
+  resolveSettingsCorner,
+} from './RadialHud';
+import { ScreenDocks, dockStackHeight } from './ScreenDocks';
+import { normalizeShortcutDock, normalizeStatusDock } from '../utils/screenDocks';
+import {
+  enabledWorkspaceCount,
   filterRadialApps,
   getRootRadialApps,
   isWorkspacePickItem,
+  pickWorkspaceSwitchMode,
   parseWorkspacePickIndex,
 } from '../utils/workspaceRadial';
 import { clampDwellMs, directionCommitPx } from '../constants/radialDwell';
+import { isBackKeyEvent, normalizeBackKey } from '../constants/radialBackKey';
 import { radialScrimGradient } from '../utils/radialScrim';
+import { HUB_DRAG_SLOP_PX, clampWheelCenter } from '../utils/radialDrag';
+import {
+  annularSectorPath,
+  polarPoint,
+  sectorBoundsDeg,
+  sectorBeamAlphas,
+  sectorBeamLean,
+  sectorBeamStops,
+  sectorCentreDeg,
+  sectorGradientStops,
+  sectorIndexForDelta,
+  sectorReachStops,
+  SECTOR_EDGE_ALPHA,
+  SECTOR_FILL_ALPHA,
+  SECTOR_SEAM_ALPHA,
+  SECTOR_SEAM_FALLOFF_SCALE,
+  SECTOR_SEAM_REACH,
+} from '../utils/radialSectors';
 
 // PERF FIX #3: Module-level weather cache — persists across menu open/close cycles
 // Prevents a new HTTP fetch on every menu open; refreshes only after 10 minutes or location change
@@ -152,23 +181,47 @@ export function computeRadialLayout({
     numberOfApps > 1 ? (size + neighbourGap) / 2 / sinHalfSlice : 0;
 
   // Floor: clear of the central hub, clear of the centre dead zone that
-  // cancels selection, and scaled by the saved radius.
-  const radiusScale = (menuRadius + minGap) / 150;
+  // cancels selection.
   const floorRadius = (size: number) =>
     Math.max(
       size * 1.1 + minGap + 12,                // hub is size * 1.2 wide
       (activationThreshold ?? 60) + size / 2 + 8, // stay outside the dead zone
       92,
-    ) * radiusScale;
+    );
 
-  let targetRadius = Math.max(floorRadius(currentIconSize), packedRadius(currentIconSize));
+  /**
+   * The saved radius scales the WHOLE ring, not just its floor.
+   *
+   * Scaling only the floor made the setting inert wherever packing won, which on any wheel of nine
+   * or more is the entire lower half of the slider: twelve shortcuts sat at the same 170 px from
+   * 90 px through 220 px, so the one control named after the wheel's size could not change it. The
+   * divisor is 150 and the defaults are 140 + 10, so a default wheel comes out exactly where it
+   * always did; every other value now moves it.
+   */
+  const radiusScale = (menuRadius + minGap) / 150;
+  const naturalRadius = (size: number) => Math.max(floorRadius(size), packedRadius(size));
+
+  let targetRadius = naturalRadius(currentIconSize) * radiusScale;
+
+  /**
+   * A ring asked to come in tighter than its own packing has to take it out of the icons — there is
+   * nowhere else for the room to come from, and neighbours that overlap are worse than tiles that
+   * are small. Bounded at half size, the same floor the screen clamp below uses; past that the ring
+   * simply stops shrinking.
+   */
+  if (targetRadius < packedRadius(currentIconSize) && numberOfApps > 1) {
+    const possibleScale = (2 * targetRadius * sinHalfSlice - neighbourGap) / currentIconSize;
+    const scaleFactor = Math.max(0.5, Math.min(1.0, possibleScale));
+    currentIconSize = Math.round(currentIconSize * scaleFactor);
+    targetRadius = Math.max(targetRadius, packedRadius(currentIconSize));
+  }
 
   // If the ring outgrows the screen, shrink the icons instead of overlapping.
   if (targetRadius > maxScreenRadius && numberOfApps > 1) {
     const possibleScale = (2 * maxScreenRadius * sinHalfSlice - neighbourGap) / currentIconSize;
     const scaleFactor = Math.max(0.5, Math.min(1.0, possibleScale));
     currentIconSize = Math.round(currentIconSize * scaleFactor);
-    targetRadius = Math.max(floorRadius(currentIconSize), packedRadius(currentIconSize));
+    targetRadius = Math.max(naturalRadius(currentIconSize), Math.min(targetRadius, maxScreenRadius));
   }
 
   return { actualMenuRadius: targetRadius, actualIconSize: currentIconSize };
@@ -195,6 +248,18 @@ interface RadialMenuProps {
    */
   windowOrigin?: Coordinates | null;
   onWorkspaceSwitch?: (workspaceIndex: number) => void;
+  /**
+   * The hub has been picked up and carried: the wheel's new centre, in this window's client
+   * coordinates. Absent — the wheel drawn somewhere that cannot move it — leaves the middle
+   * button a button and nothing more.
+   */
+  onMove?: (position: Coordinates) => void;
+  /**
+   * The hand has committed to a drag. The owner's job is to make room for it: the wheel is born in
+   * a box a few hundred pixels wider than itself, and a wheel that cannot leave that box has not
+   * been moved anywhere. Called once per drag, on the pixel the slop is crossed.
+   */
+  onDragBegin?: () => void;
   currentWorkspace?: Workspace;
   /** False while the hidden HWND takes its first transparent paint. */
   animationReady?: boolean;
@@ -206,6 +271,19 @@ interface RadialMenuProps {
    * hint off screen mid-sentence, punishing the one person it was written for.
    */
   onDirectionHintSeen?: () => void;
+  /**
+   * The corner gear was pressed: take the wheel down and put Settings up. Absent — the wheel used
+   * anywhere that has no Settings window to open — withdraws the gear entirely.
+   */
+  onOpenSettings?: () => void;
+  /**
+   * The machine's live readings, for the system dock.
+   *
+   * Held by `RadialApp` and handed down, never subscribed to here: this component is remounted on
+   * every open (`radialMountKey`), and a reading that lived in it would reset to "unknown" each
+   * time — the dock would paint four blanks for a frame at the start of every gesture.
+   */
+  systemStatus: SystemStatus;
 }
 
 /**
@@ -282,6 +360,18 @@ const DWELL_ARC_MIN_MS = 90;
  */
 const DIRECTION_CLAMP_FACTOR = 2.5;
 /**
+ * The slack, in absolute terms, has a ceiling of its own.
+ *
+ * A pure multiple was fine while the thresholds were small, but it scales the COST OF REVERSING
+ * with the sensitivity: at "low" (200px) a saturated vector would sit 500px out, and turning to the
+ * item on the opposite side would mean dragging 700px through the wheel. The slack only has one job
+ * — be comfortably wider than `DWELL_HOLD_PX`, so a tremor the count still accepts as a still hand
+ * cannot drag the vector back under the threshold — and 60px does that at every setting. The
+ * multiple still rules where it is the smaller of the two, which is "high", where it was never the
+ * problem.
+ */
+const DIRECTION_CLAMP_SLACK_MAX_PX = 60;
+/**
  * The parking `SetCursorPos` reaches the DOM as an ordinary `mousemove` — and as a jump of
  * hundreds of pixels, which added to the vector would point opposite to the gesture. While a
  * parking is pending, the sample that lands at the centre (or that jumps further than a hand can
@@ -334,6 +424,15 @@ interface RadialMenuItemProps {
   bloom: boolean;
   /** Small chip inside the label pill (workspace number, "recents"…). Omitted when the slice has no hint. */
   shortcutHint?: string;
+  /**
+   * The digit that launches this slice, drawn ON THE TILE. Undefined when numbers are off.
+   *
+   * Not the same channel as `shortcutHint`, which lives in the label pill: that pill is hidden
+   * entirely unless labels are on, and hidden on every unaimed slice unless they are persistent.
+   * A number you can only see once you are already pointing at the thing has nothing left to tell
+   * you — so this one rides the tile, where it is visible for every slice at once.
+   */
+  numberHint?: string;
   /**
    * Duration of the dwell aim arc. Set ONLY on the tile whose timer is running — `undefined` on
    * every other one, so their `React.memo` is not invalidated on each dwell.
@@ -447,6 +546,270 @@ function normalizeHoverColor(value?: string): string {
   return /^#[0-9a-f]{6}$/i.test(value ?? '') ? value!.toUpperCase() : '#FFFFFF';
 }
 
+/**
+ * Area targeting, drawn.
+ *
+ * By direction the wheel has always given each item an equal share of the screen — the maths in
+ * `resolveAimAtPoint` say so — but nothing on screen did. The user was told "point at it" and left
+ * to infer where one target stopped owning the pointer and the next began, which is the kind of
+ * boundary a hand only learns by being wrong about it. This paints that division: the seams are
+ * there from the moment the wheel opens, and the wedge being aimed at lights up evenly from the
+ * hub out past its icon, then fades before the rim — so it reads as a SECTION that carries on off
+ * the edge of the drawing, which is the truth, rather than as a shape whose outer arc is a limit.
+ *
+ * It draws nothing that takes clicks: the confirmation is the window's `mouseup`, which resolves
+ * the aim from the point itself. A wedge that swallowed the event would be a second opinion about
+ * where the target is, and the wheel is only ever allowed one.
+ */
+const RadialSectors = React.memo(({
+  count,
+  activeIndex,
+  radiusInner,
+  radiusOuter,
+  hoverColor,
+  falloffRadius,
+  visible,
+  dimmed,
+}: {
+  count: number;
+  /** `null` while the aim is in the dead zone — every wedge goes back to being a boundary only. */
+  activeIndex: number | null;
+  radiusInner: number;
+  radiusOuter: number;
+  hoverColor: string;
+  /**
+   * Where the hold ends and the dissolve begins — the scrim pool's edge, comfortably past the icon
+   * ring. Everything inside it is the lit section; everything outside is the wedge saying goodbye.
+   */
+  falloffRadius: number;
+  visible: boolean;
+  /** During the launch echo the wheel's furniture gets out of the way of what was confirmed. */
+  dimmed: boolean;
+}) => {
+  const gradientId = React.useId().replace(/:/g, '');
+  /**
+   * The ring has to have a ring's shape. A large activation zone on a small wheel can push the dead
+   * zone past where the wedges are allowed to end, and an annulus with its radii the wrong way
+   * round does not draw a smaller ring — it draws an inside-out path. There is no area to show in
+   * that configuration, so nothing is shown.
+   */
+  const drawable = radiusOuter > radiusInner + 8;
+  const size = Math.max(radiusOuter * 2, 2);
+
+  /**
+   * Paths are rebuilt only when the geometry changes, never on a hover: the highlight is an
+   * `opacity` swap on wedges that are already in the tree, which the compositor animates without
+   * touching the main thread. Rebuilding the `d` strings on every slice crossed was the one way to
+   * make a full-screen SVG cost something.
+   */
+  const wedges = React.useMemo(() => {
+    return Array.from({ length: count }, (_, index) => {
+      const { startDeg, endDeg } = sectorBoundsDeg(index, count);
+      return annularSectorPath(radiusInner, radiusOuter, startDeg, endDeg);
+    });
+  }, [count, radiusInner, radiusOuter]);
+
+  /** The boundaries themselves: one line per seam, drawn once and never touched again. */
+  const dividers = React.useMemo(() => {
+    if (count < 2) return [] as { x1: number; y1: number; x2: number; y2: number }[];
+    const seamEnd = radiusOuter * SECTOR_SEAM_REACH;
+    return Array.from({ length: count }, (_, index) => {
+      /** One seam per wedge — each item's opening edge; the closing one is its neighbour's. */
+      const { startDeg } = sectorBoundsDeg(index, count);
+      const near = polarPoint(radiusOuter, radiusInner, startDeg);
+      const far = polarPoint(radiusOuter, seamEnd, startDeg);
+      return { x1: near.x, y1: near.y, x2: far.x, y2: far.y };
+    });
+  }, [count, radiusInner, radiusOuter]);
+
+  /**
+   * Fractions of the gradient's radius — every radius here is in pixels, and the gradient wants
+   * them normalised against its own.
+   */
+  const innerStop = radiusInner / radiusOuter;
+  const falloffStop = Math.min(0.9, Math.max(innerStop + 0.02, falloffRadius / radiusOuter));
+  /** The seams fade sooner than the wedges, and over their own shorter run. */
+  const seamFalloffStop = Math.min(
+    0.9,
+    Math.max(innerStop + 0.02, (falloffRadius * SECTOR_SEAM_FALLOFF_SCALE) / (radiusOuter * SECTOR_SEAM_REACH)),
+  );
+  const seamInnerStop = innerStop / SECTOR_SEAM_REACH;
+  const seamEnd = radiusOuter * SECTOR_SEAM_REACH;
+
+  /**
+   * The beam runs STRAIGHT out along the wedge it belongs to, not out in every direction at once.
+   *
+   * A ring fades along arcs, so the lit part of a wedge is bounded by a curve and reads as a piece
+   * cut out of one glow belonging to the hub — the light is the wheel's, and the wedge is only
+   * where it happens to show. A gradient along the wedge's own bisector reads the other way round:
+   * the light is going somewhere, and where it goes is the answer the mode exists to give.
+   *
+   * It only LEANS, though. Arriving at nothing is the reach's job, and the two are multiplied —
+   * `sectorBeamStops` in `src/utils/radialSectors.ts` has the whole of why.
+   */
+  const lean = sectorBeamLean(count);
+
+  if (!drawable) return null;
+
+  /** One straight gradient, along `deg`, from the wheel's centre out for `length` pixels. */
+  const beamGradient = (
+    id: string,
+    stops: { offset: number; opacity: number }[],
+    deg: number,
+    length: number = radiusOuter,
+    color: string = hoverColor,
+  ) => {
+    /**
+     * User space, not the bounding box: every offset here is already a fraction of a RADIUS, and a
+     * box-relative vector would re-scale them against each wedge's own bounds — a different run
+     * per slice, which is the one thing the shared arithmetic exists to prevent.
+     */
+    const far = polarPoint(radiusOuter, length, deg);
+    return (
+      <linearGradient
+        id={id}
+        gradientUnits="userSpaceOnUse"
+        x1={radiusOuter}
+        y1={radiusOuter}
+        x2={far.x.toFixed(2)}
+        y2={far.y.toFixed(2)}
+      >
+        {stops.map((stop, index) => (
+          <stop
+            key={index}
+            offset={stop.offset.toFixed(4)}
+            stopColor={color}
+            stopOpacity={stop.opacity.toFixed(4)}
+          />
+        ))}
+      </linearGradient>
+    );
+  };
+
+  /** Tempered for how much of the plane a wedge of this wheel covers — see `sectorBeamAlphas`. */
+  const beamStops = sectorBeamStops(
+    innerStop, falloffStop, ...sectorBeamAlphas(SECTOR_FILL_ALPHA, count), lean,
+  );
+  const edgeStops = sectorBeamStops(
+    innerStop, falloffStop, ...sectorBeamAlphas(SECTOR_EDGE_ALPHA, count), lean,
+  );
+  const seamStops = sectorGradientStops(
+    seamInnerStop, seamFalloffStop, SECTOR_SEAM_ALPHA[0], SECTOR_SEAM_ALPHA[1],
+  );
+  /** Every wedge points somewhere else, so every wedge needs its own pair. */
+  const beamId = (index: number) => `${gradientId}-beam-${index}`;
+  const edgeId = (index: number) => `${gradientId}-edge-${index}`;
+
+  return (
+    <svg
+      className="zn-radial-sectors absolute top-0 left-0 pointer-events-none"
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      shapeRendering="geometricPrecision"
+      style={{
+        transform: 'translate(-50%, -50%)',
+        ['--zn-op' as string]: visible ? (dimmed ? 0 : 1) : 0,
+      }}
+      aria-hidden
+    >
+      <defs>
+        {/*
+          Three gradients, one shape: hold through the section, then dissolve to nothing by the time
+          the shape runs out. `sectorGradientStops` owns the curve and the sampling; the pairs below
+          are only how bright each of the three starts out. See `src/utils/radialSectors.ts`.
+
+          The fill, and then the wedge's two sides lit along with it — the fill alone made a soft
+          blob, and a lit AREA needs the angle it occupies to be visible, which is an angle carried
+          entirely by its edges.
+        */}
+        {wedges.map((_, index) => (
+          <React.Fragment key={index}>
+            {beamGradient(beamId(index), beamStops, sectorCentreDeg(index, count))}
+            {beamGradient(edgeId(index), edgeStops, sectorCentreDeg(index, count))}
+          </React.Fragment>
+        ))}
+        {/*
+          The reach: the wheel's own dissolve, drawn once for the whole plane and multiplied into
+          every wedge as a mask. It depends on nothing but the distance from the hub, so it is zero
+          on the entire rim at once — which is what lets the beam above lean without ever leaving
+          alpha standing where the window cuts.
+        */}
+        <radialGradient id={`${gradientId}-reach`} cx="50%" cy="50%" r="50%">
+          {sectorReachStops(innerStop, falloffStop, lean).map((stop, index) => (
+            <stop
+              key={index}
+              offset={stop.offset.toFixed(4)}
+              stopColor="#FFFFFF"
+              stopOpacity={stop.opacity.toFixed(4)}
+            />
+          ))}
+        </radialGradient>
+        <mask id={`${gradientId}-mask`} maskUnits="userSpaceOnUse" x={0} y={0} width={size} height={size}>
+          <rect width={size} height={size} fill={`url(#${gradientId}-reach)`} />
+        </mask>
+        {/*
+          The seams, white rather than the hover colour: they belong to the wheel and not to the
+          selection, and they are on before anything is aimed at. Each runs along its OWN line for
+          its own shorter reach, so it lands on zero exactly where the line ends — a seam that
+          stopped while it still had alpha would be a tick mark, not a boundary trailing off.
+        */}
+        {dividers.map((_, index) => (
+          <React.Fragment key={`seam-${index}`}>
+            {beamGradient(
+              `${gradientId}-seam-${index}`,
+              seamStops,
+              sectorBoundsDeg(index, count).startDeg,
+              seamEnd,
+              '#FFFFFF',
+            )}
+          </React.Fragment>
+        ))}
+      </defs>
+
+      {/*
+        One mask for all of them, not one each: it is the same ring every wedge is multiplied by,
+        and a mask per path would be a full-screen rasterisation per shortcut on every open.
+      */}
+      <g mask={`url(#${gradientId}-mask)`}>
+        {wedges.map((path, index) => (
+          <path
+            key={index}
+            className="zn-radial-sector"
+            d={path}
+            fill={`url(#${beamId(index)})`}
+            stroke={`url(#${edgeId(index)})`}
+            strokeWidth={1.25}
+            vectorEffect="non-scaling-stroke"
+            style={{ opacity: index === activeIndex ? 1 : 0 }}
+          />
+        ))}
+      </g>
+
+      {/*
+        The seams, and they are on from the moment the wheel opens — that is the whole point of the
+        mode. Faint, though: they answer "where does this one end", which is a question the user
+        asks once and never again, and furniture that had to shout would be worse than none.
+
+        Drawn AFTER the wedges so the lit one does not paint over its own boundaries.
+      */}
+      {dividers.map((line, index) => (
+        <line
+          key={index}
+          x1={line.x1}
+          y1={line.y1}
+          x2={line.x2}
+          y2={line.y2}
+          stroke={`url(#${gradientId}-seam-${index})`}
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+    </svg>
+  );
+});
+RadialSectors.displayName = 'RadialSectors';
+
 const RadialMenuItem = React.memo(({
   app,
   index,
@@ -462,6 +825,7 @@ const RadialMenuItem = React.memo(({
   folderStackLength,
   bloom,
   shortcutHint,
+  numberHint,
   dwellMs,
   dwellKey,
   echo,
@@ -790,6 +1154,38 @@ const RadialMenuItem = React.memo(({
             </div>
           </div>
 
+          {/*
+            NUMBER BADGE — the key that launches this slice.
+
+            Top-left, because bottom-right is the folder badge's and the two would sit on top of
+            each other on any folder in the first nine positions. Outside the mask, like that one:
+            the mask exists to clip raster icons and would cut the badge in half.
+
+            It carries the tile's own plate and border rather than floating glyph-on-wallpaper —
+            the wheel opens over a desktop nobody controls, and a bare digit disappears on a light
+            one. During the launch echo it fades with the rest of the slice, which it gets for free
+            by sitting inside the wrapper.
+          */}
+          {numberHint && (
+            <div
+              className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center z-30"
+              style={{
+                background: isActive ? hoverColor : 'rgba(6,7,9,0.95)',
+                border: `1px solid ${isActive ? hoverColor : 'rgba(255,255,255,0.26)'}`,
+                color: isActive ? activeForeground : 'rgba(255,255,255,0.78)',
+                boxShadow: '0 0 0 1px rgba(0,0,0,0.5)',
+                fontFamily: 'var(--font-radial)',
+                fontSize: '11px',
+                fontWeight: 600,
+                lineHeight: 1,
+                letterSpacing: '-0.01em',
+              }}
+              aria-hidden
+            >
+              {numberHint}
+            </div>
+          )}
+
           {/* FOLDER BADGE (Outside Mask, Inside Wrapper) */}
           {app.type === 'folder' && (
             <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-white rounded-full flex items-center justify-center border-2 border-[#1A1A1A] z-30 shadow-md">
@@ -873,12 +1269,16 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
    * confirmed icon on screen through the launch echo before letting App close the window.
    */
   onClose: onCloseNow,
+  systemStatus,
   apps,
   config,
   triggerSource = 'shortcut',
   windowOrigin = null,
   onWorkspaceSwitch,
+  onMove,
+  onDragBegin,
   onDirectionHintSeen,
+  onOpenSettings,
   currentWorkspace,
   animationReady = true,
   updateReady = false,
@@ -1235,6 +1635,14 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
   viewportSizeRef.current = viewportSize;
   const radialHoverColor = normalizeHoverColor(config.radialHoverColor);
   const radialHoverForeground = getReadableForeground(radialHoverColor);
+  /**
+   * The digits are drawn only when they DO something. `radialNumberLabels` is the choice of whether
+   * to keep seeing them once the positions are learned, and it is read as `!== false` — but it
+   * cannot turn numbers on by itself: an unmarked wheel is the wheel, marking it is what the
+   * launch feature costs, and a badge over a key that launches nothing is furniture.
+   */
+  const numberBadgesOn =
+    config.radialNumberLaunch === true && config.radialNumberLabels !== false;
   const iconSizePx = config.iconSize || 64;
   const minGap = config.appSpacing || 0;
   const numberOfApps = currentLevelApps.length;
@@ -1300,6 +1708,7 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
 
   // The root hub carries the Rovyl identity; deeper levels keep the Back affordance.
   const isRoot = folderStack.length === 0;
+  const rootIsPicker = pickWorkspaceSwitchMode(config) === 'picker' && enabledWorkspaceCount(config) > 1;
   const centerLabel = !isRoot ? uiString('menu.back') : (config.centerButton?.label || uiString('menu.center'));
 
 
@@ -1383,8 +1792,20 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
    * a pointer to hit it with. Keeping it here made high sensitivity indistinguishable from medium,
    * because nothing would light before the hub's ~60px.
    */
-  const aimGateRef = useRef(deadZoneRadius);
-  aimGateRef.current = directionMode ? directionCommitRef.current : deadZoneRadius;
+  const aimGate = directionMode ? directionCommitRef.current : deadZoneRadius;
+  const aimGateRef = useRef(aimGate);
+  aimGateRef.current = aimGate;
+
+  /**
+   * Area targeting: the same aim as by direction, with the division painted (see `RadialSectors`).
+   *
+   * It survives `radialInstantActivate: 'dwell'` rather than being replaced by it. That mode
+   * already aims by direction, so the wedges describe it exactly — and with the pointer hidden
+   * there is even less on screen saying where one target's share of the plane ends, which is the
+   * whole thing this draws. Pointer targeting is the one mode it cannot mean: there the target is
+   * the icon and not the sector, so a wedge would promise an area that does not launch anything.
+   */
+  const areaMode = config.radialSelectionMode === 'area';
 
   /**
    * Confirmation diagnostics. It lands in the persistence log (`rovyl-persistence.log`) and says,
@@ -1441,6 +1862,13 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       );
       setHasMoved(false);
       setIsCenterActive(false);
+      /**
+       * The aim belonged to the level being left. It survived here and nowhere else — every other
+       * level swap in the file clears it — and with the mouse that was invisible, because the next
+       * `mousemove` recomputed it before the frame was seen. Driven from the keyboard nothing
+       * recomputes, so the highlight simply stayed on whatever item had inherited that index.
+       */
+      setActiveIndex(null);
       return;
     }
     onClose('__CENTER__');
@@ -1449,6 +1877,7 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
   const stateRef = useRef({
     isOpen,
     position,
+    viewportSize,
     activeIndex,
     onClose,
     currentLevelApps,
@@ -1467,6 +1896,7 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
     stateRef.current = {
       isOpen,
       position,
+      viewportSize,
       activeIndex,
       onClose,
       currentLevelApps,
@@ -1479,7 +1909,7 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       actualIconSize,
       deadZoneRadius,
     };
-  }, [isOpen, position, activeIndex, onClose, currentLevelApps, config, isCenterActive, hasMoved, folderStack, apps, actualMenuRadius, actualIconSize, deadZoneRadius]);
+  }, [isOpen, position, viewportSize, activeIndex, onClose, currentLevelApps, config, isCenterActive, hasMoved, folderStack, apps, actualMenuRadius, actualIconSize, deadZoneRadius]);
 
   /**
    * The point the wheel AIMS at, written in the event itself — without going through a render. By
@@ -1562,7 +1992,10 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
          * The vector's ceiling. Only the direction counts — the virtual pointer never needs to
          * reach the icon ring, because by direction the aim is the sector and not the icon.
          */
-        const clamp = directionCommitRef.current * DIRECTION_CLAMP_FACTOR;
+        const clamp = Math.min(
+          directionCommitRef.current * DIRECTION_CLAMP_FACTOR,
+          directionCommitRef.current + DIRECTION_CLAMP_SLACK_MAX_PX,
+        );
         const lengthSq = nextX * nextX + nextY * nextY;
         const clampSq = clamp * clamp;
         if (lengthSq > clampSq) {
@@ -1604,6 +2037,155 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
    */
   const gestureConsumedRef = useRef(false);
 
+  /* ------------------------------------------------------------------ */
+  /* Carrying the wheel                                                  */
+  /* ------------------------------------------------------------------ */
+
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+  const onDragBeginRef = useRef(onDragBegin);
+  onDragBeginRef.current = onDragBegin;
+
+  /**
+   * The press that is holding the middle button, and what has become of it.
+   *
+   * `offset` is the pointer's displacement from the centre at the moment of the press, held fixed
+   * for the whole drag — that is what makes the wheel feel picked up rather than snapped to the
+   * cursor. `moved` is the whole difference between a drag and a click on the hub, and it is read
+   * twice: once to stop the release from confirming the centre, and once to stop the `click` that
+   * follows a moment later from doing the same thing.
+   */
+  const hubDragRef = useRef<{
+    offset: Coordinates;
+    start: Coordinates;
+    moved: boolean;
+  } | null>(null);
+
+  /** Takes the drag's listeners back off the window. In a ref because the handlers install it. */
+  const releaseHubDragRef = useRef<() => void>(() => {});
+
+  /**
+   * Swallows the `click` the browser synthesises after the release that ended a drag.
+   *
+   * The drag's own listeners run in the CAPTURE phase and stop the event at `window`, so neither
+   * the hub's handlers nor the aim listeners ever see the press itself. `click` is a separate
+   * event, dispatched afterwards, and without this it would reach the centre target and be read as
+   * the middle button having been pressed — closing the wheel at the end of every drag.
+   *
+   * Armed for a quarter second rather than "until the next click": a release that lands over
+   * nothing produces no click at all, and a listener left waiting for one would eat a real press
+   * later in the same gesture.
+   */
+  const swallowClickAfterDrag = useCallback(() => {
+    const swallow = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      window.removeEventListener('click', swallow, true);
+    };
+    window.addEventListener('click', swallow, true);
+    window.setTimeout(() => window.removeEventListener('click', swallow, true), 250);
+  }, []);
+
+  const handleHubDragMove = useCallback(
+    (event: MouseEvent) => {
+      const drag = hubDragRef.current;
+      if (!drag) return;
+
+      if (!drag.moved) {
+        const dx = event.clientX - drag.start.x;
+        const dy = event.clientY - drag.start.y;
+        if (dx * dx + dy * dy < HUB_DRAG_SLOP_PX * HUB_DRAG_SLOP_PX) return;
+        drag.moved = true;
+        /** Nothing that was counting towards a launch survives the wheel moving under it. */
+        disarmDwell();
+        /**
+         * The box the wheel was born in is a few hundred pixels wider than the ring, and mouse
+         * events stop at its edge. Asked for here, on the pixel the hand commits, so the window is
+         * already the size of the screen by the time the drag has gone anywhere.
+         */
+        onDragBeginRef.current?.();
+      }
+
+      /** Capture phase: from here the aim listeners and the hub's own handlers never see this press. */
+      event.stopPropagation();
+
+      const { viewportSize, actualMenuRadius, actualIconSize } = stateRef.current;
+      onMoveRef.current?.(
+        clampWheelCenter(
+          { x: event.clientX - drag.offset.x, y: event.clientY - drag.offset.y },
+          viewportSize,
+          actualMenuRadius + actualIconSize / 2,
+        ),
+      );
+    },
+    [disarmDwell],
+  );
+
+  const handleHubDragEnd = useCallback(
+    (event: MouseEvent) => {
+      const drag = hubDragRef.current;
+      if (!drag || event.button !== 0) return;
+      hubDragRef.current = null;
+      releaseHubDragRef.current();
+      /** Never moved: this was a click on the middle button, and it is still owed its action. */
+      if (!drag.moved) return;
+
+      event.stopPropagation();
+      swallowClickAfterDrag();
+
+      /**
+       * The aim's record of where the pointer is was frozen when the drag began, and the wheel has
+       * moved since. The pointer is inside the hub — it never left it, the wheel followed it — so
+       * the centre is the honest answer, and writing it here is what stops a release a moment later
+       * from confirming a slice the hand never pointed at.
+       */
+      const point = { x: event.clientX, y: event.clientY };
+      lastPointerRef.current = point;
+      lastAnchorPointRef.current = point;
+      setIsCenterActive(true);
+      setActiveIndex(null);
+    },
+    [swallowClickAfterDrag],
+  );
+
+  /**
+   * A press on the hub. Nothing is decided here: it is still a click until the hand has travelled
+   * `HUB_DRAG_SLOP_PX`, because the middle button has an action of its own and every pixel of slop
+   * is lag on a control that is pressed constantly.
+   */
+  const beginHubDrag = useCallback(
+    (event: React.MouseEvent) => {
+      if (event.button !== 0 || !onMoveRef.current || hubDragRef.current) return;
+      /**
+       * Not by direction. There the real pointer is hidden and parked at the centre by main, so
+       * there is no hand on screen to carry anything with: every sample is a direction, not a place.
+       */
+      if (directionModeRef.current) return;
+      const { position } = stateRef.current;
+      hubDragRef.current = {
+        offset: { x: event.clientX - position.x, y: event.clientY - position.y },
+        start: { x: event.clientX, y: event.clientY },
+        moved: false,
+      };
+      window.addEventListener('mousemove', handleHubDragMove, true);
+      window.addEventListener('mouseup', handleHubDragEnd, true);
+      releaseHubDragRef.current = () => {
+        window.removeEventListener('mousemove', handleHubDragMove, true);
+        window.removeEventListener('mouseup', handleHubDragEnd, true);
+      };
+    },
+    [handleHubDragMove, handleHubDragEnd],
+  );
+
+  /** A wheel that goes away mid-drag must not leave two capture listeners on the window. */
+  useEffect(
+    () => () => {
+      hubDragRef.current = null;
+      releaseHubDragRef.current();
+    },
+    [],
+  );
+
   /**
    * Resolves the target from a concrete point, with the same maths as `mousemove`.
    *
@@ -1627,12 +2209,13 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       }
       if (currentLevelApps.length === 0) return { isCenter: false, index: null };
 
+      /**
+       * The same function the wedges are drawn from (`src/utils/radialSectors.ts`). It used to be
+       * this arithmetic written out here, and the drawing would have been a second copy of it —
+       * which is the one bug a launcher cannot afford: lighting one target and opening another.
+       */
       const sliceAngle = 360 / currentLevelApps.length;
-
-      let angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI) + 90;
-      if (angle < 0) angle += 360;
-      const index = Math.floor(((angle + sliceAngle / 2) % 360) / sliceAngle);
-      const candidateIndex = index >= 0 && index < currentLevelApps.length ? index : null;
+      const candidateIndex = sectorIndexForDelta(deltaX, deltaY, currentLevelApps.length);
 
       /**
        * Cursor mode: the target is the icon UNDER the pointer, not the direction it lies in.
@@ -2051,9 +2634,15 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       window.electron.setWorkspaceShortcutsState(
         isOpen,
         config.workspaceSwitchMode === 'picker' ? 'picker' : 'hotkeys',
+        /**
+         * Quick launch owns 1–9 while it is on. Main registers them as GLOBAL shortcuts in
+         * hotkeys mode — and a registered global shortcut is consumed there, so the keydown
+         * handler in this file would never see the digit it was told to launch on.
+         */
+        config.radialNumberLaunch === true,
       );
     }
-  }, [isOpen, config.workspaceSwitchMode]);
+  }, [isOpen, config.workspaceSwitchMode, config.radialNumberLaunch]);
 
   // STABLE KEYBOARD LISTENER (Decoupled from interaction states to avoid missing events)
   // NOTE: Workspace switching (1-9) is handled exclusively by global shortcuts registered in
@@ -2091,10 +2680,18 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
           setTypeAhead((current) => current.slice(0, -1));
           return;
         }
-        if (folderStack.length > 0) {
+        /**
+         * Through the hub's own handler, which is what the centre does when clicked.
+         *
+         * This branch used to pop `folderStack` alone. The wheel draws `rawLevelApps`, a separate
+         * piece of state, and only the ROOT is re-derived from the stack (the sync effect bails
+         * whenever the stack is non-empty) — so Backspace out of a NESTED folder moved the
+         * breadcrumb up while the slices stayed on the level just left. One level deep it looked
+         * fine, which is why it lasted.
+         */
+        if (stateRef.current.folderStack.length > 0) {
           e.preventDefault();
-          setFolderStack((prev) => prev.slice(0, -1));
-          setActiveIndex(null);
+          handleCenterActivate();
           return;
         }
         return;
@@ -2156,9 +2753,80 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       const isTypedCharacter =
         e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && e.key !== ' ';
 
-      // Workspace Switching (1-9) — disabled in picker mode (user chooses workspace on the radial)
+      /**
+       * QUICK LAUNCH — 1–9 run the item in that position, no Enter.
+       *
+       * First, ahead of both the workspace digits and the filter, because with the setting on the
+       * digits are its: main has been told not to register 1–9 globally (see the
+       * `setWorkspaceShortcutsState` effect) precisely so they arrive here.
+       *
+       * `!typeAheadRef.current` for the same reason the workspace digits have it — once a filter is
+       * running, the 2 in "Photoshop 2024" is a character. And a digit past the last slice falls
+       * THROUGH to the type-ahead below rather than being swallowed: on a wheel of four items, 7
+       * has no target, and eating it would make the wheel feel broken instead of just unfiltered.
+       */
+      if (
+        configRef.current.radialNumberLaunch === true &&
+        !typeAheadRef.current &&
+        e.key >= '1' &&
+        e.key <= '9'
+      ) {
+        const currentItems = stateRef.current.currentLevelApps;
+        const targetIdx = parseInt(e.key, 10) - 1;
+        const target = currentItems[targetIdx];
+        if (target) {
+          e.preventDefault();
+          /**
+           * Set the aim before firing. The echo highlights the confirmed index on its own, but
+           * `handleAppClick` on a folder or a recents fetch does NOT launch — it descends — and
+           * without this the new level would arrive with nothing selected and no sign that the
+           * keystroke landed.
+           */
+          setActiveIndex(targetIdx);
+          handleAppClickRef.current(target);
+          return;
+        }
+      }
+
+      /**
+       * THE BACK KEY — the hub's keyboard equivalent. The centre could only ever be clicked.
+       *
+       * Gated on being at least one level deep, which is exactly the state in which the hub reads
+       * "Back" (`centerLabel`). That gate is what makes a plain letter safe to bind: at the root,
+       * where searching actually happens, the key falls through and the filter still gets it, so
+       * the default Q does not cost anyone `qBittorrent`. Nothing typed, for the same reason the
+       * digits check it — mid-filter every character belongs to the filter.
+       *
+       * It goes through `handleCenterActivate` rather than popping the stack here: that function is
+       * the click handler, it carries the quarantine and echo guards, and the one thing this file
+       * does not need is a fourth place that knows how to leave a folder.
+       *
+       * `radialNumberLaunch` gates it because that switch is what puts the whole keyboard-driven
+       * wheel on, and the settings row for this key only exists underneath it. The gate has to be
+       * HERE and not only in the panel: the binding defaults to a real key, so without it someone
+       * who never turned any of this on would find Q quietly stepping out of folders, with no
+       * setting on screen to explain it or take it away.
+       */
+      if (
+        configRef.current.radialNumberLaunch === true &&
+        !typeAheadRef.current &&
+        stateRef.current.folderStack.length > 0 &&
+        isBackKeyEvent(e, normalizeBackKey(configRef.current.radialBackKey))
+      ) {
+        e.preventDefault();
+        handleCenterActivate();
+        return;
+      }
+
+      /*
+       * Workspace Switching (1-9) — disabled in picker mode (user chooses workspace on the radial),
+       * and disabled outright while quick launch owns the digits. The block above only CONSUMES the
+       * ones with a slice under them; without this, 7 on a wheel of four fell through to here and
+       * switched workspace, which is exactly what the setting says it no longer does.
+       */
       if (
         onWorkspaceSwitch &&
+        configRef.current.radialNumberLaunch !== true &&
         configRef.current.workspaceSwitchMode !== 'picker'
       ) {
         const num = parseInt(e.key);
@@ -2832,6 +3500,36 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
   );
 
   /**
+   * Where the area wedges stop: as far as they can go, which is the nearest edge of the window.
+   *
+   * The nearest, not the farthest corner, and that is the whole constraint. The wedge's gradient
+   * is built to reach exactly zero at this radius; anything drawn past the window is cut, and a cut
+   * through alpha that is not yet zero is a straight line across the desktop — the one thing the
+   * scrim itself is carefully built never to produce. An inscribed circle is the largest shape
+   * whose own fade is guaranteed to finish inside the frame.
+   *
+   * They used to stop at `backdropRadius`, where the scrim's pool starts fading. That kept the
+   * highlight tidy but short: it hugged the wheel, and the fade had to happen in the last thirty
+   * pixels, which is a visible edge no matter how it is shaped. Reaching the frame gives the fade
+   * hundreds of pixels to disappear in — and it is also the honest picture, because the pointer
+   * really can be anywhere on that side of the screen and still launch the item.
+   *
+   * The floor covers the pathological case — a wheel clamped hard against a corner. There the
+   * tiles are already at the edge and the wedges are not what is wrong.
+   */
+  const sectorOuterRadius = Math.max(
+    Math.round(actualMenuRadius + actualIconSize * 0.6),
+    Math.floor(
+      Math.min(
+        position.x,
+        position.y,
+        viewportSize.width - position.x,
+        viewportSize.height - position.y,
+      ),
+    ),
+  );
+
+  /**
    * The window is `transparent: true` over the desktop, so `backdrop-filter` has nothing to sample
    * on Windows — we only composite alpha. Two design consequences:
    *
@@ -2847,6 +3545,32 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
     () => radialScrimGradient(position, bo, backdropRadius),
     [bo, backdropRadius, position.x, position.y],
   );
+
+  const settingsCorner = resolveSettingsCorner(config.settingsCorner);
+  const showSettingsGear =
+    config.showSettingsCorner === true && !!onOpenSettings && !directionMode;
+
+  /**
+   * The docks.
+   *
+   * Withdrawn in direction mode for the same reason the gear is: there the pointer is hidden and
+   * parked at the centre, so no hand can reach a corner, and the click that tried would launch the
+   * slice it was aiming across. Icons that cannot be pressed are worse than no icons.
+   */
+  const statusDock = React.useMemo(() => normalizeStatusDock(config.statusDock), [config.statusDock]);
+  const shortcutDock = React.useMemo(
+    () => normalizeShortcutDock(config.shortcutDock),
+    [config.shortcutDock],
+  );
+  const docksVisible = !directionMode;
+
+  /**
+   * How far inboard the gear has to step. Everything in a corner is placed from the same edge, so
+   * without this the gear is drawn on top of whatever is already there.
+   */
+  const gearDodge =
+    (hudOccupiedRegion(config, batteryLevel, weather) === settingsCorner ? HUD_STATUS_HEIGHT : 0) +
+    (docksVisible ? dockStackHeight(settingsCorner, statusDock, shortcutDock) : 0);
 
   return (
     <div
@@ -2878,6 +3602,48 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
             batteryLevel={batteryLevel}
             weather={weather}
           />
+
+          {/*
+            The way into Settings that does not have to be known about — off unless asked for.
+
+            Not in direction mode: there the pointer is hidden and parked at the centre, so no hand
+            can reach a corner, and the click that tried would launch the slice it was aiming
+            across. A gear that cannot be pressed is worse than no gear, so it is withdrawn rather
+            than disabled — the same rule Settings follows for a dock's placement rows.
+          */}
+          {showSettingsGear && (
+            <RadialSettingsCorner
+              isOpen={isOpen && !isExiting && bloom && !echoActive}
+              corner={settingsCorner}
+              dodgeBy={gearDodge}
+              onOpen={onOpenSettings!}
+            />
+          )}
+
+          {/*
+            The user's own icons and the machine's readouts, in the corners they were placed in.
+            They leave with the wheel — the echo animation leaves only the launched icon on screen.
+          */}
+          {docksVisible && (
+            <ScreenDocks
+              isOpen={isOpen && !isExiting && bloom && !echoActive}
+              status={statusDock}
+              shortcuts={shortcutDock}
+              systemStatus={systemStatus}
+              onLaunch={(item) => onClose(item.id, item)}
+              onOpenPanel={(panel) => {
+                /**
+                 * The wheel comes down FIRST and only then is the panel asked for — the same order
+                 * the corner gear follows. A Windows panel opening behind a wheel that still holds
+                 * the mouse is a window the user cannot reach.
+                 */
+                onClose(null);
+                window.electron?.openSystemPanel?.(panel);
+              }}
+              onVolume={(percent) => window.electron?.setSystemVolume?.(percent)}
+              onMute={() => window.electron?.setSystemMuted?.(!systemStatus.muted)}
+            />
+          )}
 
           {/*
             What has been typed, and what it left. Fixed to the viewport rather than hung off the
@@ -2947,6 +3713,34 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
           >
 
             {/*
+              Area targeting: the wheel's plane, cut into equal shares and drawn.
+
+              First child of the container so it paints UNDER the hub (z-20) and the tiles: it is
+              the ground the wheel stands on, not a layer over it. It reaches the nearest edge of
+              the window and holds full strength only as far as `backdropRadius` — the scrim pool's
+              own edge — so the lit section sits around the wheel and the rest of the wedge is the
+              long dissolve out to the frame.
+            */}
+            {areaMode && currentLevelApps.length > 0 && (
+              <RadialSectors
+                count={currentLevelApps.length}
+                /** During the echo the confirmed target holds the highlight, exactly as the tiles do. */
+                activeIndex={launchEcho ? launchEcho.index : activeIndex}
+                /**
+                 * Where the wedge starts owning the pointer is `aimGate` — inside it, the aim is the
+                 * hub. Floored at the hub's own radius so a high sensitivity (which pulls the gate in
+                 * to ~18px) does not draw the seams across the middle button.
+                 */
+                radiusInner={Math.max(aimGate, hubDiameter / 2 + 8)}
+                radiusOuter={sectorOuterRadius}
+                falloffRadius={backdropRadius}
+                hoverColor={radialHoverColor}
+                visible={isOpen && !isExiting && bloom}
+                dimmed={centerFired}
+              />
+            )}
+
+            {/*
               Centre target: a transparent SQUARE over the hub, slightly larger than it.
               The hub is `rounded-full`, and `border-radius` clips the hit test too — a click on the
               box's corner misses it, passes through to the overlay and becomes a direction.
@@ -2962,7 +3756,15 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
                   height: `${hubHitSize}px`,
                   transform: 'translate(-50%, -50%)',
                 }}
-                onMouseDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  /**
+                   * Held and dragged, the middle button carries the whole wheel; released without
+                   * travelling, it is the button it has always been. Which of the two this press
+                   * turns out to be is decided by the hand, in `handleHubDragMove`.
+                   */
+                  beginHubDrag(e);
+                }}
                 onMouseUp={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -3050,45 +3852,6 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
               onMouseUp={(e) => e.stopPropagation()}
             >
               {/*
-                Update badge. Informative, never clickable: the centre is the gesture for closing,
-                and a target glued to it reintroduced the class of swapped-click bugs that cost a
-                whole session to fix. The action lives in Settings.
-
-                The arrow is drawn, not a typographic glyph: a glyph brings its own side bearings
-                and baseline, and in a 24px circle that is enough to set it crooked. The points
-                below come from the INK's bounds — a 1.7 stroke with round caps grows 0.85 past each
-                end — and not from the bare geometry.
-              */}
-              {updateReady && (
-                <span
-                  className="absolute pointer-events-none"
-                  style={{
-                    top: -Math.round(hubDiameter * 0.03),
-                    right: -Math.round(hubDiameter * 0.03),
-                    width: Math.round(hubDiameter * 0.32),
-                    height: Math.round(hubDiameter * 0.32),
-                    borderRadius: '50%',
-                    background: '#0A84FF',
-                    /** Ring in the background colour: it separates from the hub without adding a new outline. */
-                    border: `${Math.max(2, Math.round(hubDiameter * 0.026))}px solid #0a0a0a`,
-                    boxSizing: 'border-box',
-                    zIndex: 40,
-                  }}
-                  aria-label="Update ready"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" style={{ display: 'block', width: '100%', height: '100%' }}>
-                    <path
-                      d="M12 7.2V13.6M8.9 10.5L12 13.6l3.1-3.1M7.7 16.7h8.6"
-                      stroke="#fff"
-                      strokeWidth={1.7}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </span>
-              )}
-
-              {/*
                 The ring is an SVG `<circle>`, not a CSS `border`.
                 They are two different rasterisers: the border of a box with `border-radius` is
                 drawn as four corner arcs stitched around a rectangle, and it is at those seams —
@@ -3146,7 +3909,70 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
               )}
             </div>
 
+            {/*
+              Update badge — clicking it is the Settings "Restart now" button.
+              It lives OUTSIDE the hub, in a wrapper that copies the hub's transform and opacity:
+              inside the hub it would sit under the centre target (z-30), which swallows every click
+              on the hub's square. The wrapper is inert; only the badge takes the pointer, and it
+              stops the press on both edges so it never also reads as the centre.
+
+              The arrow is drawn, not a typographic glyph: a glyph brings its own side bearings
+              and baseline, and in a 24px circle that is enough to set it crooked. The points
+              below come from the INK's bounds — a 1.7 stroke with round caps grows 0.85 past each
+              end — and not from the bare geometry.
+            */}
+            {updateReady && (
+              <div
+                className="zn-radial-hub absolute top-0 left-0 pointer-events-none"
+                style={{
+                  width: `${hubDiameter}px`,
+                  height: `${hubDiameter}px`,
+                  zIndex: 35,
+                  ['--zn-tf' as string]: `translate(-50%, -50%) scale(${bloom && !isExiting ? (isCenterActive ? 1.06 : 1) : 0.82})`,
+                  ['--zn-op' as string]: echoActive ? 0 : bloom && !isExiting ? 1 : 0,
+                  ['--zn-dur' as string]: isExiting ? '120ms' : '160ms',
+                  ...(echoActive ? { ['--zn-dur-op' as string]: '140ms' } : null),
+                }}
+              >
+                <button
+                  type="button"
+                  className={`zn-radial-update-badge absolute ${isOpen && !isExiting && !echoActive ? 'pointer-events-auto' : 'pointer-events-none'}`}
+                  style={{
+                    top: -Math.round(hubDiameter * 0.03),
+                    right: -Math.round(hubDiameter * 0.03),
+                    width: Math.round(hubDiameter * 0.32),
+                    height: Math.round(hubDiameter * 0.32),
+                    padding: 0,
+                    borderRadius: '50%',
+                    background: '#0A84FF',
+                    /** Ring in the background colour: it separates from the hub without adding a new outline. */
+                    border: `${Math.max(2, Math.round(hubDiameter * 0.026))}px solid #0a0a0a`,
+                    boxSizing: 'border-box',
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onMouseUp={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.electron?.installUpdateNow?.();
+                  }}
+                  aria-label="Restart to update"
+                  title="Restart to update"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" style={{ display: 'block', width: '100%', height: '100%' }}>
+                    <path
+                      d="M12 7.2V13.6M8.9 10.5L12 13.6l3.1-3.1M7.7 16.7h8.6"
+                      stroke="#fff"
+                      strokeWidth={1.7}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            )}
+
             {/* Context pill: where you are in the wheel + the gesture that goes back. */}
+            {config.showWorkspacePill !== false && (
             <div
               className="zn-radial-pill absolute left-0 top-0 pointer-events-none z-30"
               style={{
@@ -3167,8 +3993,15 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
                   boxShadow: '0 0 0 1px rgba(0,0,0,0.45)',
                 }}
               >
-                {/* Inside a workspace its name is enough — "Rovyl" identifies the root. */}
-                {(isRoot ? [currentWorkspace?.name || 'Rovyl'] : folderStack.map((level) => level.label)).map((label, i) => (
+                {/*
+                  Inside a workspace its name is enough — "Rovyl" identifies the root. In picker
+                  mode the root IS the choice of workspace, so naming the one picked last time
+                  there read as "you are in X" before anything had been picked.
+                */}
+                {(isRoot
+                  ? [rootIsPicker ? 'Workspaces' : currentWorkspace?.name || 'Rovyl']
+                  : folderStack.map((level) => level.label)
+                ).map((label, i) => (
                   <React.Fragment key={`${label}-${i}`}>
                     {i > 0 && <span className="text-[11px] leading-none text-white/25">/</span>}
                     <span
@@ -3187,6 +4020,7 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
                 </span>
               </div>
             </div>
+            )}
 
             {/* App Icons — the swap between levels is the bloom itself (see the `bloom` effect). */}
             {currentLevelApps.map((app, index) => {
@@ -3203,9 +4037,24 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
                   angularDistance = Math.min(raw, currentLevelApps.length - raw);
                 }
                 /* Workspace slices carry the 1–9 global shortcut, which was previously invisible. */
-                const shortcutHint = isWorkspacePickItem(app)
+                const workspaceHint = isWorkspacePickItem(app)
                   ? String(parseWorkspacePickIndex(app.id) + 1)
                   : undefined;
+                /**
+                 * Only the first nine get a digit — there is no tenth key, and a tile numbered
+                 * `10` would promise a keystroke that does not exist.
+                 */
+                const numberHint =
+                  numberBadgesOn && index < 9 ? String(index + 1) : undefined;
+                /**
+                 * One number per slice, and it is the one that does something.
+                 *
+                 * The pill's hint is the workspace's own hotkey; the badge is the slice's POSITION.
+                 * They are not the same count — a disabled workspace is skipped by the picker but
+                 * keeps its hotkey — so on a wheel where the two disagree, showing both puts two
+                 * different digits on one tile and only the badge's is the key being pressed.
+                 */
+                const shortcutHint = numberHint ? undefined : workspaceHint;
                 return (
                   <RadialMenuItem
                     key={`${app.id}-${folderStack.length}-${index}`}
@@ -3223,6 +4072,7 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
                     folderStackLength={folderStack.length}
                     bloom={isOpen && !isExiting && bloom}
                     shortcutHint={shortcutHint}
+                    numberHint={numberHint}
                     /** `undefined` on every other tile — their `React.memo` is not invalidated. */
                     dwellMs={dwellTick && dwellTick.index === index ? dwellRunMsRef.current : undefined}
                     dwellKey={dwellTick && dwellTick.index === index ? dwellTick.key : undefined}

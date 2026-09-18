@@ -23,8 +23,11 @@ import {
   FolderOpen,
   Globe2,
   GripVertical,
+  Image as ImageGlyph,
   Loader2,
   AlertTriangle,
+  Braces,
+  LayoutList,
   Monitor,
   Mouse,
   Pencil,
@@ -33,28 +36,56 @@ import {
   Search,
   Palette,
   Settings,
+  Shapes,
   Shield,
   Square,
   SquareStack,
+  TerminalSquare,
   Trash2,
   Undo2,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { AppItem, UIConfig, UpdateChannel, UpdateState, Workspace } from '../types';
+import { SETTINGS_CORNERS } from '../types';
+import type { AppItem, SettingsCorner, UIConfig, UpdateChannel, UpdateState, Workspace } from '../types';
 import { DEFAULT_UI_CONFIG } from '../defaults';
-import { normalizeTaskbarOverlay } from '../utils/taskbarOverlay';
+import {
+  DOCK_GAP_MAX,
+  DOCK_GAP_MIN,
+  DOCK_POSITION_LABELS,
+  SHORTCUT_DOCK_ICON_MAX,
+  SHORTCUT_DOCK_ICON_MIN,
+  STATUS_DOCK_ICON_MAX,
+  STATUS_DOCK_ICON_MIN,
+  normalizeShortcutDock,
+  normalizeStatusDock,
+  shortcutDockIsActive,
+  statusDockIsActive,
+  type DockPosition,
+} from '../utils/screenDocks';
 import { getIcon } from '../iconMap';
 import { resolveWebsiteIconFields } from '../siteFavicon';
 import { hostLabelFromUrl, looksFetchable, normalizeSiteUrl, resolveWebsiteTitle } from '../siteTitle';
 import { SmartIcon } from './SmartIcon';
+import { Collapse, isRevealScrolling } from './Collapse';
 import { IconPicker } from './IconPicker';
+import { CustomIconPanel } from './CustomIconPanel';
+import { describeIconFile, type CustomIconPick } from '../utils/customIcon';
 import { RovylLogo } from './RovylLogo';
 import '../fonts-display.css';
 import { NativeAppIcon, useInstalledApps, clearInstalledAppsMemory, type InstalledApp } from './installedApps';
 import { radialCrowding } from '../utils/workspaceRadial';
 import { startMenuAppIdToLaunchCommand } from '../utils/windowsLaunchCommand';
-import { WheelPreview } from './WheelPreview';
+import { WheelPreview, MENU_RADIUS_RANGE } from './WheelPreview';
+import { DockShortcutsManager } from './DockShortcuts';
+import { DockPositionPicker } from './DockPositionPicker';
+import { WorkspaceFileEditor, type WorkspaceFileEditorHandle } from './WorkspaceFileEditor';
+import {
+  BACK_KEY_OFF,
+  DEFAULT_BACK_KEY,
+  normalizeBackKey,
+  rejectBackKey,
+} from '../constants/radialBackKey';
 import { nextTypeAheadBuffer, selectMenuPlacement, typeAheadIndex } from './selectMenu';
 import { LANGUAGES, normalizeLanguage, translations, useTranslation } from '../i18n/useTranslation';
 
@@ -120,7 +151,9 @@ export type WorkspaceUpdater = (
 /** The modal is reserved for what does not fit in a row: long lists, recording and editing. */
 type Editor =
   | { kind: 'shortcut' }
+  | { kind: 'backKey' }
   | { kind: 'blocked' }
+  | { kind: 'dockShortcuts' }
   | { kind: 'workspace'; index: number }
   | null;
 
@@ -130,7 +163,7 @@ interface SettingItem {
   group: string;
   title: string;
   description?: string;
-  kind: 'bool' | 'range' | 'segmented' | 'select' | 'open' | 'action' | 'color';
+  kind: 'bool' | 'range' | 'segmented' | 'select' | 'dockPosition' | 'open' | 'action' | 'color';
   enabled?: boolean;
   value?: string;
   min?: number;
@@ -140,6 +173,8 @@ interface SettingItem {
   format?: (value: number) => string;
   choices?: Array<{ value: string; label: string; hint?: string }>;
   current?: string;
+  /** `dockPosition` only: the other dock's region, drawn faint so a shared corner is a choice. */
+  occupied?: { position: DockPosition; label: string };
   /**
    * Extra words the search box matches, beyond title/description/group.
    *
@@ -194,11 +229,11 @@ interface SettingItem {
  * Monochrome — color stays reserved for action or state, never for navigation.
  */
 const SECTIONS: Array<{ id: SectionId; label: string; caption: string; icon: LucideIcon }> = [
-  { id: 'general', label: 'General', caption: 'Core Rovyl behavior.', icon: Settings },
-  { id: 'trigger', label: 'Activation', caption: 'How and where the wheel appears.', icon: Mouse },
-  { id: 'appearance', label: 'Appearance', caption: 'Shape, presence, and theme.', icon: Palette },
   { id: 'spaces', label: 'Workspaces', caption: 'Contexts and their shortcuts.', icon: SquareStack },
+  { id: 'trigger', label: 'Activation', caption: 'How and where the wheel appears.', icon: Mouse },
   { id: 'advanced', label: 'Advanced', caption: 'Performance, protection, and data.', icon: Shield },
+  { id: 'appearance', label: 'Appearance', caption: 'Shape, presence, and theme.', icon: Palette },
+  { id: 'general', label: 'General', caption: 'Core Rovyl behavior.', icon: Settings },
 ];
 
 export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
@@ -212,6 +247,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   setNav,
   discoveryPhase = 'idle',
 }) => {
+  const { t, dir } = useTranslation(config.language);
+
   /** Follow pointer needs the global cursor position — Wayland doesn't expose one. */
   const [waylandLimited, setWaylandLimited] = React.useState(false);
   React.useEffect(() => {
@@ -222,14 +259,12 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
     return () => { cancelled = true; };
   }, []);
 
-  const { t, dir } = useTranslation(config.language);
-
   const sectionsList = useMemo(() => [
-    { id: 'general' as const, label: t('general'), caption: t('generalDesc'), icon: Settings },
-    { id: 'trigger' as const, label: t('trigger'), caption: t('triggerDesc'), icon: Mouse },
-    { id: 'appearance' as const, label: t('appearance'), caption: t('appearanceDesc'), icon: Palette },
     { id: 'spaces' as const, label: t('workspaces'), caption: t('workspacesDesc'), icon: SquareStack },
+    { id: 'trigger' as const, label: t('trigger'), caption: t('triggerDesc'), icon: Mouse },
     { id: 'advanced' as const, label: t('advanced'), caption: t('advancedDesc'), icon: Shield },
+    { id: 'appearance' as const, label: t('appearance'), caption: t('appearanceDesc'), icon: Palette },
+    { id: 'general' as const, label: t('general'), caption: t('generalDesc'), icon: Settings },
   ], [t]);
 
   /**
@@ -393,7 +428,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
     if (updateInfo.state === 'ready') {
       return {
         title: version ? `Version ${version} is ready` : 'An update is ready',
-        description: 'Downloaded and verified. Rovyl restarts to finish.',
+        description: 'Downloaded and verified. Rovyl installs it the next time it starts.',
         kind: 'action' as const,
         actionLabel: 'Restart now',
         actionIcon: ArrowUpFromLine,
@@ -406,8 +441,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         title: version ? `Downloading version ${version}` : 'Downloading an update',
         description:
           typeof updateInfo.percent === 'number'
-            ? `${updateInfo.percent}% done. You can keep working — Rovyl installs it when you restart.`
-            : 'You can keep working — Rovyl installs it when you restart.',
+            ? `${updateInfo.percent}% done. You can keep working — Rovyl installs it the next time it starts.`
+            : 'You can keep working — Rovyl installs it the next time it starts.',
         kind: 'action' as const,
         actionLabel: 'Downloading…',
         actionIcon: ArrowDownToLine,
@@ -533,35 +568,18 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
     window.electron?.setGameMode?.(next);
   };
 
-  const taskbar = normalizeTaskbarOverlay(config.taskbarOverlay);
-  const updateTaskbar = (patch: Partial<typeof taskbar>) => {
-    const next = { ...taskbar, ...patch };
-    update('taskbarOverlay', next);
-    /** Main is what enacts this, and it must not wait for the next save to hear about it. */
-    window.electron?.setTaskbarOverlay?.(next);
-  };
-
   /**
-   * Which taskbar this machine has, as reported by the helper: 'classic' | 'mixed' | 'xaml'.
+   * The two docks, normalized on read.
    *
-   * Null while nobody has asked yet. On a Windows 11 bar rebuilt in XAML (22H2 and later) the
-   * Start button, the clock, the tray and the task buttons are not windows at all, so there is
-   * nothing an outside process can hide -- and the four switches below are withdrawn rather than
-   * left there doing nothing. Asked for only when this section is on screen: answering it costs a
-   * helper process, and the feature is off for most people.
+   * Never field by field: a config written before one of these switches existed is missing it, and
+   * a missing `iconSize` read as 0 is a dock that is enabled, placed, and invisible.
    */
-  const [taskbarKind, setTaskbarKind] = useState<string | null>(null);
-  useEffect(() => {
-    if (sectionId !== 'appearance' || taskbarKind !== null) return;
-    let cancelled = false;
-    window.electron?.getTaskbarCapability?.().then((kind) => {
-      /** Never gate the WRITE on `cancelled` -- only the setState, which is all it can speak for. */
-      if (!cancelled && typeof kind === 'string') setTaskbarKind(kind);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [sectionId, taskbarKind]);
-  /** Unknown reads as capable: on Win10, which is the common case, withdrawing them would be wrong. */
-  const taskbarElementsReachable = taskbarKind !== 'xaml';
+  const statusDock = normalizeStatusDock(config.statusDock);
+  const updateStatusDock = (patch: Partial<typeof statusDock>) =>
+    update('statusDock', { ...statusDock, ...patch });
+  const shortcutDock = normalizeShortcutDock(config.shortcutDock);
+  const updateShortcutDock = (patch: Partial<typeof shortcutDock>) =>
+    update('shortcutDock', { ...shortcutDock, ...patch });
 
   /**
    * A patch, or a function of the workspace as it is when the update actually runs.
@@ -822,8 +840,42 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
       value: format(raw), configKey,
     });
 
+    const keyboardTriggerOn = config.enableKeyboardTrigger !== false;
+    const mouseTriggerOn = config.enableMouseTrigger !== false;
+    const numberLaunchOn = config.radialNumberLaunch === true;
+    const backKey = normalizeBackKey(config.radialBackKey);
+    /** The other claimant on 1–9 — see the description of the quick-launch row. */
+    const workspaceHotkeysOn = (config.workspaceSwitchMode ?? 'picker') !== 'picker';
+
+    /**
+     * Turning off the last trigger would leave no way in, so the other one comes on in the same
+     * change — the pair behaves like a choice of route rather than two switches that can both be
+     * down.
+     *
+     * The press is never refused. Someone switching the last trigger off is not making a mistake,
+     * they are saying "not this one", and answering that with a toast leaves them to work out the
+     * other half themselves; doing it for them is the answer they meant. Both keys move in ONE
+     * `setConfig` so the two rows can never render a frame with nothing enabled.
+     */
+    const toggleTrigger = (key: 'enableKeyboardTrigger' | 'enableMouseTrigger') => {
+      const other = key === 'enableKeyboardTrigger' ? 'enableMouseTrigger' : 'enableKeyboardTrigger';
+      const turningOff = key === 'enableKeyboardTrigger' ? keyboardTriggerOn : mouseTriggerOn;
+      const otherOn = key === 'enableKeyboardTrigger' ? mouseTriggerOn : keyboardTriggerOn;
+      if (turningOff && !otherOn) {
+        setConfig((current) => ({ ...current, [key]: false, [other]: true }));
+        showToast(
+          key === 'enableKeyboardTrigger'
+            ? 'Switched to the mouse trigger'
+            : 'Switched to the keyboard trigger',
+        );
+        return;
+      }
+      update(key, !turningOff);
+    };
+
     return {
       general: [
+        ...(canUpdate ? [{ key: 'update', group: 'Updates', ...updateRow }] : []),
         {
           /**
            * A select, not the segmented control this was while it held two languages: seven
@@ -855,7 +907,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         {
           key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu', group: 'Activation',
           title: 'Menu on middle click over apps',
-          description: navigator.userAgent.includes('Linux')
+          description: waylandLimited
             ? 'On: a quick middle click opens the menu AND does the native action (known quirk). Off: middle click stays 100% native everywhere — open the menu with the hotkey instead.'
             : 'A quick middle click opens the menu.',
           kind: 'bool', enabled: config.middleClickOpensMenu !== false,
@@ -865,8 +917,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
         {
           key: 'openAtLogin', configKey: 'openAtLogin', group: 'Startup',
-          title: navigator.userAgent.includes('Linux') ? 'Launch at startup' : 'Start with Windows',
-          description: 'Rovyl is ready as soon as you sign in to Windows.',
+          title: waylandLimited ? 'Launch at startup' : 'Start with Windows',
+          description: waylandLimited ? 'Adds an XDG autostart entry at sign-in.' : 'Rovyl is ready as soon as you sign in to Windows.',
           kind: 'bool', enabled: Boolean(config.openAtLogin),
           onToggle: () => {
             const next = !config.openAtLogin;
@@ -883,42 +935,71 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
       ],
       trigger: [
+        /**
+         * Each way in is a switch that owns its own settings, and the settings only exist while
+         * the switch is on.
+         *
+         * What stood here was one switch, on the mouse group alone, described as "instead of the
+         * keyboard" — which was not true (both worked at once, and always had) and left the
+         * keyboard side looking like the thing you could not turn off. Two symmetrical switches
+         * say the real shape: two independent triggers, either of which can be off.
+         *
+         * The trigger's own rows are the ones that collapse. Position and Hands-free below are
+         * about the wheel once it is open, however it got there, so they stay put.
+         */
         {
-          key: 'shortcut', group: 'Keyboard', title: 'Global shortcut',
-          description: 'Open the wheel over any application.',
-          kind: 'open', value: config.globalShortcut, onOpen: () => setEditor({ kind: 'shortcut' }),
+          key: 'keyboard', configKey: 'enableKeyboardTrigger', group: 'Keyboard',
+          title: 'Enable keyboard trigger',
+          description: 'Open the wheel with a keyboard shortcut.',
+          kind: 'bool', enabled: keyboardTriggerOn,
+          onToggle: () => toggleTrigger('enableKeyboardTrigger'),
         },
+        ...(keyboardTriggerOn
+          ? ([
+              {
+                key: 'shortcut', group: 'Keyboard', title: 'Global shortcut',
+                description: 'Open the wheel over any application.',
+                kind: 'open', value: config.globalShortcut, onOpen: () => setEditor({ kind: 'shortcut' }),
+              },
+              {
+                key: 'shortcutMode', configKey: 'shortcutTriggerMode' as const, group: 'Keyboard',
+                title: t('shortcutBehavior'),
+                description: t('shortcutBehaviorDesc'),
+                kind: 'segmented', current: config.shortcutTriggerMode ?? 'toggle',
+                choices: [{ value: 'toggle', label: t('shortcutToggle') }, { value: 'hold', label: t('shortcutHold') }],
+                onChange: (value) => update('shortcutTriggerMode', value as UIConfig['shortcutTriggerMode']),
+              },
+            ] as SettingItem[])
+          : []),
         {
-          key: 'shortcutMode', configKey: 'shortcutTriggerMode', group: 'Keyboard', title: t('shortcutBehavior'),
-          description: t('shortcutBehaviorDesc'),
-          kind: 'segmented', current: config.shortcutTriggerMode ?? 'toggle',
-          choices: [{ value: 'toggle', label: t('shortcutToggle') }, { value: 'hold', label: t('shortcutHold') }],
-          onChange: (value) => update('shortcutTriggerMode', value as UIConfig['shortcutTriggerMode']),
+          key: 'mouse', configKey: 'enableMouseTrigger', group: 'Mouse',
+          title: 'Enable mouse trigger',
+          description: 'Open the wheel with a mouse button.',
+          kind: 'bool', enabled: mouseTriggerOn,
+          onToggle: () => toggleTrigger('enableMouseTrigger'),
         },
-        {
-          key: 'mouse', configKey: 'enableMouseTrigger', group: 'Mouse', title: 'Mouse trigger',
-          description: 'Open Rovyl with a mouse button instead of the keyboard.',
-          kind: 'bool', enabled: config.enableMouseTrigger,
-          onToggle: () => update('enableMouseTrigger', !config.enableMouseTrigger),
-        },
-        {
-          key: 'mouseButton', configKey: 'mouseTriggerButton', group: 'Mouse', title: 'Trigger button',
-          description: 'Side buttons are usually free; left and right stay with Windows.',
-          kind: 'segmented', current: config.mouseTriggerButton ?? 'middle',
-          choices: [
-            { value: 'middle', label: 'Wheel' },
-            { value: 'x1', label: 'Back' },
-            { value: 'x2', label: 'Forward' },
-          ],
-          onChange: (value) => update('mouseTriggerButton', value as UIConfig['mouseTriggerButton']),
-        },
-        {
-          key: 'mouseMode', configKey: 'mouseTriggerMode', group: 'Mouse', title: 'Gesture behavior',
-          description: 'Click keeps the wheel open; hold runs the selection on release.',
-          kind: 'segmented', current: config.mouseTriggerMode ?? 'click',
-          choices: [{ value: 'click', label: 'Click' }, { value: 'hold', label: 'Hold' }],
-          onChange: (value) => update('mouseTriggerMode', value as UIConfig['mouseTriggerMode']),
-        },
+        ...(mouseTriggerOn
+          ? ([
+              {
+                key: 'mouseButton', configKey: 'mouseTriggerButton' as const, group: 'Mouse', title: 'Trigger button',
+                description: 'Side buttons are usually free; left and right stay with Windows.',
+                kind: 'segmented', current: config.mouseTriggerButton ?? 'middle',
+                choices: [
+                  { value: 'middle', label: 'Wheel' },
+                  { value: 'x1', label: 'Back' },
+                  { value: 'x2', label: 'Forward' },
+                ],
+                onChange: (value) => update('mouseTriggerButton', value as UIConfig['mouseTriggerButton']),
+              },
+              {
+                key: 'mouseMode', configKey: 'mouseTriggerMode' as const, group: 'Mouse', title: 'Gesture behavior',
+                description: 'Click keeps the wheel open; hold runs the selection on release.',
+                kind: 'segmented', current: config.mouseTriggerMode ?? 'click',
+                choices: [{ value: 'click', label: 'Click' }, { value: 'hold', label: 'Hold' }],
+                onChange: (value) => update('mouseTriggerMode', value as UIConfig['mouseTriggerMode']),
+              },
+            ] as SettingItem[])
+          : []),
         {
           key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
           /**
@@ -927,15 +1008,15 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            * to launch will be sitting on.
            */
           description:
-            config.radialMonitor === 'cursor'
-              ? 'The wheel opens on the screen the pointer is already on, so what you launch lands where you are working.'
-              : 'The wheel always opens on the main screen, wherever the pointer happens to be.',
+            config.radialPlacement === 'cursor'
+              ? 'Appearance opens the wheel under the pointer, so it is already on the screen the pointer is on — this choice has nothing left to decide.'
+              : config.radialMonitor === 'cursor'
+                ? 'The wheel opens on the screen the pointer is already on, so what you launch lands where you are working.'
+                : 'The wheel always opens on the main screen, wherever the pointer happens to be.',
           kind: 'segmented',
           choices: [
             { value: 'primary', label: 'Main screen' },
-            waylandLimited
-              ? { value: 'cursor', label: 'Follow pointer (limited by Wayland)' }
-              : { value: 'cursor', label: 'Follow pointer' },
+            { value: 'cursor', label: waylandLimited ? 'Follow pointer (limited by Wayland)' : 'Follow pointer' },
           ],
           current: config.radialMonitor === 'cursor' ? 'cursor' : 'primary',
           onChange: (value) => update('radialMonitor', value as UIConfig['radialMonitor']),
@@ -1006,6 +1087,54 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                 DWELL_MS_STEP, 'radialInstantDwellMs'),
             ]
           : []),
+        {
+          key: 'numberLaunch', configKey: 'radialNumberLaunch', group: 'Number keys',
+          title: 'Quick launch with number keys',
+          /**
+           * Three things have to be here and nowhere else: that there is no Enter (it is the whole
+           * point, and every other keyboard path on the wheel needs one), that the count follows
+           * the wheel rather than any list in this panel, and — when it applies — what it takes
+           * away. `workspaceSwitchMode: 'hotkeys'` also owns 1–9, and a feature that quietly
+           * disables another one is a bug report waiting to be filed.
+           */
+          description:
+            numberLaunchOn && workspaceHotkeysOn
+              ? 'Press 1–9 to run the shortcut in that position — no Enter. The digits are the wheel’s now, so switching workspace by number is off; use the wheel or the scroll wheel instead.'
+              : workspaceHotkeysOn
+                ? 'Press 1–9 to run the shortcut in that position, counting clockwise from the top — no Enter. It takes the number keys away from workspace switching.'
+                : 'Press 1–9 to run the shortcut in that position, counting clockwise from the top — no Enter, no aiming. Also turns on the key that steps back out of a folder.',
+          kind: 'bool', enabled: numberLaunchOn,
+          onToggle: () => update('radialNumberLaunch', !numberLaunchOn),
+        },
+        /** Only while there are numbers to show — same rule as the hands-free tunings above. */
+        ...(numberLaunchOn
+          ? ([
+              {
+                key: 'numberLabels', configKey: 'radialNumberLabels' as const, group: 'Number keys',
+                title: 'Show numbers on the wheel',
+                description:
+                  'Draws each position’s digit on its icon. Turn it off once the wheel is in your hands — the keys go on working.',
+                kind: 'bool', enabled: config.radialNumberLabels !== false,
+                onToggle: () =>
+                  update('radialNumberLabels', config.radialNumberLabels === false),
+              },
+              {
+                key: 'backKey', configKey: 'radialBackKey' as const, group: 'Number keys',
+                title: 'Key to leave a folder',
+                /**
+                 * Where it does NOT work is the whole reason a plain letter is safe to bind, so it
+                 * is the sentence the row leads with. Someone who reads only the title would
+                 * otherwise try it on the root wheel, watch it type into the filter, and file it
+                 * as broken.
+                 */
+                description: backKey
+                  ? `Press ${backKey} inside a folder to step back out, the same as clicking the hub. At the top level it stays an ordinary letter, so searching is unaffected.`
+                  : 'No key assigned. The hub still goes back when clicked, and Backspace still works.',
+                kind: 'open' as const, value: backKey || 'Off',
+                onOpen: () => setEditor({ kind: 'backKey' }),
+              },
+            ] as SettingItem[])
+          : []),
       ],
       appearance: [
         {
@@ -1016,7 +1145,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           onChange: (value) => update('appearanceTheme', value as UIConfig['appearanceTheme']),
         },
         range('radius', 'Wheel', 'Orbital radius', 'Perceived wheel diameter.',
-          config.menuRadius, 90, 220, (value) => update('menuRadius', value), (value) => `${Math.round(value)} px`,
+          config.menuRadius, MENU_RADIUS_RANGE.min, MENU_RADIUS_RANGE.max,
+          (value) => update('menuRadius', value), (value) => `${Math.round(value)} px`,
           1, 'menuRadius'),
         range('iconSize', 'Wheel', 'Icon size', 'Visual weight of each target.',
           config.iconSize, 36, 92, (value) => update('iconSize', value), (value) => `${Math.round(value)} px`,
@@ -1039,17 +1169,30 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            * changes nothing is worse than a disabled one.
            */
           description:
-            config.radialInstantActivate === 'dwell'
-              ? 'Launch without clicking is on, so the wheel always aims by direction — each item owns an equal slice of the screen.'
-              : config.radialSelectionMode === 'cursor'
-                ? 'Only the icon under the pointer highlights. Release away from every icon to cancel.'
-                : 'Aim by direction: the slice you point toward highlights from anywhere on screen.',
+            config.radialSelectionMode === 'area'
+              ? 'The wheel is cut into equal wedges — one per shortcut — and the one you point at fills up. Click anywhere inside it.'
+              : config.radialInstantActivate === 'dwell'
+                ? 'Launch without clicking is on, so the wheel always aims by direction — each item owns an equal slice of the screen.'
+                : config.radialSelectionMode === 'cursor'
+                  ? 'Only the icon under the pointer highlights. Release away from every icon to cancel.'
+                  : 'Aim by direction: the slice you point toward highlights from anywhere on screen.',
           kind: 'segmented',
+          /**
+           * Area is Direction with the boundaries drawn — same maths, same muscle memory — so the
+           * two sit next to each other and Pointer, which is the one that actually targets
+           * something else, sits at the end.
+           */
           choices: [
             { value: 'angle', label: 'Direction' },
-            { value: 'cursor', label: 'Pointer' },
+            { value: 'area', label: 'Area' },
+            { value: 'cursor', label: waylandLimited ? 'Pointer (limited by Wayland)' : 'Pointer' },
           ],
-          current: config.radialSelectionMode === 'cursor' ? 'cursor' : 'angle',
+          current:
+            config.radialSelectionMode === 'cursor'
+              ? 'cursor'
+              : config.radialSelectionMode === 'area'
+                ? 'area'
+                : 'angle',
           onChange: (value) => update('radialSelectionMode', value as UIConfig['radialSelectionMode']),
         },
         {
@@ -1058,61 +1201,161 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           kind: 'bool', enabled: config.alwaysShowAppLabels,
           onToggle: () => update('alwaysShowAppLabels', !config.alwaysShowAppLabels),
         },
+        {
+          key: 'workspacePill', configKey: 'showWorkspacePill', group: 'Wheel', title: 'Workspace name',
+          description: 'Show the pill under the wheel with the current workspace and folder.',
+          keywords: 'pill chip breadcrumb workspace name folder path label below under',
+          kind: 'bool', enabled: config.showWorkspacePill !== false,
+          onToggle: () => update('showWorkspacePill', config.showWorkspacePill === false),
+        },
+        {
+          key: 'radialPlacement', configKey: 'radialPlacement', group: 'Position', title: 'Where it opens',
+          /**
+           * Said as the consequence, because that is the whole of the choice: the same wheel, the
+           * same targets, a different distance for the hand. The clamp near an edge is mentioned —
+           * someone who opens it in a corner and sees the wheel sit slightly inboard should find
+           * that written down rather than think it missed.
+           */
+          description:
+            config.radialPlacement === 'cursor'
+              ? 'The wheel blooms under the pointer, so nothing is further away than the gesture that opened it. Near an edge it steps inward just enough to keep every target on screen.'
+              : 'The wheel always blooms at the middle of the screen, wherever the pointer happens to be.',
+          kind: 'segmented',
+          choices: [
+            { value: 'center', label: 'Screen center' },
+            { value: 'cursor', label: 'At pointer' },
+          ],
+          current: config.radialPlacement === 'cursor' ? 'cursor' : 'center',
+          keywords: 'mouse cursor location position place spawn appear under pointer center centre',
+          onChange: (value) => update('radialPlacement', value as UIConfig['radialPlacement']),
+        },
         range('backdrop', 'Presence', 'Background dimming',
           'How much the rest of the screen recedes. At 100% it goes: the desktop is covered edge to edge.',
           config.backdropOpacity ?? DEFAULT_UI_CONFIG.backdropOpacity, 0, 1,
           (value) => update('backdropOpacity', value), (value) => `${Math.round(value * 100)}%`,
           0.01, 'backdropOpacity'),
-        {
-          key: 'taskbar', configKey: 'taskbarOverlay', group: 'Presence', title: 'Quiet the taskbar',
-          description: taskbarElementsReachable
-            ? 'Hide parts of the Windows taskbar while the wheel is open, on the screen the wheel is on. Everything comes back when it closes.'
-            : 'This version of Windows builds its taskbar in a way no other app can take apart, so only the background can be changed here.',
-          kind: 'bool', enabled: taskbar.enabled,
-          onToggle: () => updateTaskbar({ enabled: !taskbar.enabled }),
-        },
         /**
-         * Withdrawn rather than disabled, and withdrawn entirely on a Windows 11 XAML bar — the
-         * same rule the dwell tunings follow: a switch that stays on screen controlling nothing is
-         * worse than one that is not offered.
+         * The docks, in the order they are met: the one you fill yourself first, the one that
+         * reads the machine second. Everything under each is withdrawn rather than disabled while
+         * its dock is off — the same rule the dwell tunings follow, because a placement control
+         * for a strip that is not on screen is a control that does nothing.
          */
-        ...(taskbar.enabled && taskbarElementsReachable ? ([
+        {
+          /**
+           * No `configKey`, deliberately — and it is the one row here that must not have one.
+           * The revert chip writes `DEFAULT_UI_CONFIG[key]`, and this key holds the user's own
+           * icons: a small button whose label says "default" would delete every one of them. The
+           * workspace rows leave it off for exactly the same reason.
+           */
+          key: 'shortcutDock', group: 'Shortcut dock',
+          title: 'Shortcut dock',
+          description: shortcutDock.items.length
+            ? 'A strip of your own icons beside the open wheel. Click one to launch it.'
+            : 'A strip of your own icons beside the open wheel — Chrome, Steam, a project folder, anything. Nothing is drawn until you add some.',
+          keywords: 'dock strip icons taskbar corner launcher pinned chrome steam discord',
+          kind: 'bool', enabled: shortcutDock.enabled,
+          onToggle: () => updateShortcutDock({ enabled: !shortcutDock.enabled }),
+        },
+        ...(shortcutDock.enabled ? ([
           {
-            key: 'taskbar-start', group: 'Presence', title: 'Keep the Start button',
-            description: 'Start and Task View stay on the bar.',
-            kind: 'bool' as const, enabled: taskbar.showStart,
-            onToggle: () => updateTaskbar({ showStart: !taskbar.showStart }),
+            key: 'shortcutDock-items', group: 'Shortcut dock', title: 'Icons',
+            description: shortcutDock.items.length === 1
+              ? '1 icon in the dock.'
+              : `${shortcutDock.items.length} icons in the dock.`,
+            kind: 'open' as const,
+            value: shortcutDock.items.length ? 'Edit' : 'Add icons',
+            onOpen: () => setEditor({ kind: 'dockShortcuts' as const }),
           },
           {
-            key: 'taskbar-apps', group: 'Presence', title: 'Keep pinned and open apps',
-            description: 'The app buttons, and anything else docked beside them.',
-            kind: 'bool' as const, enabled: taskbar.showApps,
-            onToggle: () => updateTaskbar({ showApps: !taskbar.showApps }),
+            key: 'shortcutDock-position', group: 'Shortcut dock', title: 'Where it sits',
+            description: 'Pick the corner or edge on the screen below. The wheel opens over the whole screen while a dock is on — everything but the taskbar — so the corner is a real one.',
+            keywords: 'corner edge top bottom left right center centre place position move',
+            /**
+             * The screen itself, not a list of six region names. A dropdown made the user translate
+             * "Bottom center" into a place and then trust that they had; the picture is the place.
+             */
+            kind: 'dockPosition' as const,
+            current: shortcutDock.position,
+            value: DOCK_POSITION_LABELS[shortcutDock.position],
+            occupied: statusDockIsActive(statusDock)
+              ? { position: statusDock.position, label: 'System dock' }
+              : undefined,
+            onChange: (value: number | string) =>
+              updateShortcutDock({ position: value as typeof shortcutDock.position }),
           },
+          range('shortcutDock-size', 'Shortcut dock', 'Icon size',
+            'How big each icon is drawn.',
+            shortcutDock.iconSize, SHORTCUT_DOCK_ICON_MIN, SHORTCUT_DOCK_ICON_MAX,
+            (value) => updateShortcutDock({ iconSize: Math.round(value) }),
+            (value) => `${Math.round(value)} px`),
+          range('shortcutDock-gap', 'Shortcut dock', 'Spacing',
+            'The gap between neighbouring icons.',
+            shortcutDock.gap, DOCK_GAP_MIN, DOCK_GAP_MAX,
+            (value) => updateShortcutDock({ gap: Math.round(value) }),
+            (value) => `${Math.round(value)} px`),
           {
-            key: 'taskbar-tray', group: 'Presence', title: 'Keep the notification area',
-            description: 'Tray icons and the chevron that holds the rest.',
-            kind: 'bool' as const, enabled: taskbar.showTray,
-            onToggle: () => updateTaskbar({ showTray: !taskbar.showTray }),
-          },
-          {
-            key: 'taskbar-clock', group: 'Presence', title: 'Keep the clock',
-            description: 'The time and date at the end of the bar.',
-            kind: 'bool' as const, enabled: taskbar.showClock,
-            onToggle: () => updateTaskbar({ showClock: !taskbar.showClock }),
+            key: 'shortcutDock-labels', group: 'Shortcut dock', title: 'Names under the icons',
+            description: 'Off by default: a strip of eight names is a menu, and the wheel is already that.',
+            kind: 'bool' as const, enabled: shortcutDock.showLabels,
+            onToggle: () => updateShortcutDock({ showLabels: !shortcutDock.showLabels }),
           },
         ]) : []),
-        ...(taskbar.enabled ? ([
+        {
+          key: 'statusDock', configKey: 'statusDock', group: 'System dock',
+          title: 'System dock',
+          description: 'Time, battery, network and volume, read live, beside the open wheel. The volume slider and the mute button work from here.',
+          keywords: 'clock time battery network wifi volume sound tray indicators status corner',
+          kind: 'bool', enabled: statusDock.enabled,
+          onToggle: () => updateStatusDock({ enabled: !statusDock.enabled }),
+        },
+        ...(statusDock.enabled ? ([
           {
-            key: 'taskbar-transparent', group: 'Presence', title: 'Make the bar transparent',
-            /**
-             * The caveat belongs in the row, not in a release note. This is the only part of Rovyl
-             * that changes something about Windows it cannot put back exactly.
-             */
-            description:
-              'The bar itself goes, and whatever you kept above still shows. Windows does not report how the bar was painted before, so its background is restored to the standard look — which can differ slightly from a custom theme.',
-            kind: 'bool' as const, enabled: taskbar.transparent,
-            onToggle: () => updateTaskbar({ transparent: !taskbar.transparent }),
+            key: 'statusDock-position', group: 'System dock', title: 'Where it sits',
+            description: 'Pick the corner or edge on the screen below.',
+            keywords: 'corner edge top bottom left right center centre place position move',
+            kind: 'dockPosition' as const,
+            current: statusDock.position,
+            value: DOCK_POSITION_LABELS[statusDock.position],
+            occupied: shortcutDockIsActive(shortcutDock)
+              ? { position: shortcutDock.position, label: 'Shortcut dock' }
+              : undefined,
+            onChange: (value: number | string) =>
+              updateStatusDock({ position: value as typeof statusDock.position }),
+          },
+          range('statusDock-size', 'System dock', 'Icon size',
+            'How big the glyphs are drawn. The readouts beside them are set to match.',
+            statusDock.iconSize, STATUS_DOCK_ICON_MIN, STATUS_DOCK_ICON_MAX,
+            (value) => updateStatusDock({ iconSize: Math.round(value) }),
+            (value) => `${Math.round(value)} px`),
+          range('statusDock-gap', 'System dock', 'Spacing',
+            'The gap between neighbouring readouts.',
+            statusDock.gap, DOCK_GAP_MIN, DOCK_GAP_MAX,
+            (value) => updateStatusDock({ gap: Math.round(value) }),
+            (value) => `${Math.round(value)} px`),
+          {
+            key: 'statusDock-volume', group: 'System dock', title: 'Volume',
+            description: 'Output level, with a slider you can drag. Click the glyph to mute.',
+            kind: 'bool' as const, enabled: statusDock.showVolume,
+            onToggle: () => updateStatusDock({ showVolume: !statusDock.showVolume }),
+          },
+          {
+            key: 'statusDock-network', group: 'System dock', title: 'Network',
+            description: 'Wi-Fi signal, or a wired connection. Click it for the Windows network panel.',
+            kind: 'bool' as const, enabled: statusDock.showNetwork,
+            onToggle: () => updateStatusDock({ showNetwork: !statusDock.showNetwork }),
+          },
+          {
+            key: 'statusDock-battery', group: 'System dock', title: 'Battery',
+            /** Said up front, because the row is otherwise a switch that visibly does nothing. */
+            description: 'Charge level, and whether it is on the charger. Nothing is drawn on a machine with no battery.',
+            kind: 'bool' as const, enabled: statusDock.showBattery,
+            onToggle: () => updateStatusDock({ showBattery: !statusDock.showBattery }),
+          },
+          {
+            key: 'statusDock-clock', group: 'System dock', title: 'Clock',
+            description: 'The time, with the date under it.',
+            kind: 'bool' as const, enabled: statusDock.showClock,
+            onToggle: () => updateStatusDock({ showClock: !statusDock.showClock }),
           },
         ]) : []),
       ],
@@ -1138,7 +1381,6 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
       ],
       advanced: [
-        ...(canUpdate ? [{ key: 'update', group: 'Updates', ...updateRow }] : []),
         {
           key: 'performance', group: 'Performance', title: 'Precision mode',
           description: 'Prioritize immediate response and reduce visual effects.',
@@ -1179,6 +1421,43 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           },
         ] : []),
         {
+          key: 'settingsCorner', configKey: 'showSettingsCorner', group: 'Settings shortcut',
+          title: 'Settings button on the wheel',
+          /**
+           * Said with its cost, because it has one that shows: the overlay normally opens as a box
+           * around the wheel, and a corner only means the screen's corner if the window is the
+           * screen. And said with its one exclusion — aiming by direction hides the pointer, so
+           * there is no hand to bring to a corner and the gear is not drawn in that mode.
+           */
+          description:
+            config.radialInstantActivate === 'dwell'
+              ? 'A gear in the corner of the open wheel, one click from these settings. Launch without clicking aims by direction and hides the pointer, so the gear stays off while that is on.'
+              : 'A gear in the corner of the open wheel, one click from these settings. The wheel then opens over the whole screen instead of a box around itself, so the corner is a real one.',
+          kind: 'bool', enabled: config.showSettingsCorner === true,
+          keywords: 'gear cog icon corner open settings preferences shortcut button',
+          onToggle: () => update('showSettingsCorner', !config.showSettingsCorner),
+        },
+        ...(config.showSettingsCorner === true ? [{
+          key: 'settingsCornerPosition', configKey: 'settingsCorner' as const, group: 'Settings shortcut',
+          title: 'Which corner',
+          description: 'Where the gear sits. It steps inboard if the battery or weather pill is already there.',
+          /**
+           * A select: four corner names are ~380px of segmented control, wider than the column,
+           * and the same reason the Language row stopped being one.
+           */
+          kind: 'select' as const,
+          current: SETTINGS_CORNERS.includes(config.settingsCorner as SettingsCorner)
+            ? (config.settingsCorner as SettingsCorner)
+            : 'top-right',
+          choices: [
+            { value: 'top-right', label: 'Top right' },
+            { value: 'top-left', label: 'Top left' },
+            { value: 'bottom-right', label: 'Bottom right' },
+            { value: 'bottom-left', label: 'Bottom left' },
+          ],
+          onChange: (value: number | string) => update('settingsCorner', value as SettingsCorner),
+        }] : []),
+        {
           key: 'export', group: 'Data', title: 'Export settings',
           description: 'Save a portable copy of your configuration.',
           kind: 'action', actionLabel: 'Export', actionIcon: ArrowUpFromLine, onRun: exportConfig,
@@ -1198,7 +1477,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
       ],
     };
-  }, [config, gameMode, taskbar, taskbarElementsReachable, theme, apps, update, updateRow, canUpdate, onReset, deleteWorkspace, reorderWorkspaces]);
+  }, [config, gameMode, statusDock, shortcutDock, theme, apps, update, setConfig, updateRow, canUpdate, onReset, deleteWorkspace, reorderWorkspaces]);
 
   const trimmedQuery = query.trim().toLowerCase();
   const activeMeta = sectionsList.find((section) => section.id === sectionId) || SECTIONS[0];
@@ -1232,9 +1511,62 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
       element.scrollTop = 0;
       return;
     }
+    /**
+     * A reveal is moving this box on purpose, and the position it is moving away from is the one
+     * saved here — restoring it would undo the scroll frame by frame as it happened.
+     */
+    if (isRevealScrolling()) return;
     /** Write only when it has drifted: an equal `scrollTop` would still cancel a smooth scroll. */
     if (element.scrollTop !== scrollTopRef.current) element.scrollTop = scrollTopRef.current;
   });
+
+  /**
+   * The other half: the window growing under the panel, with React none the wiser.
+   *
+   * Rewriting after every commit only works while React is the one who notices, and the wheel is
+   * not. Opening it over Settings takes the HWND from the panel's 880x600 to the whole monitor —
+   * `[RadialOpen] ... hiding before resize (mode=windowed, panel=true)`, bounds 1920x1080, in the
+   * diagnostic log — and that happens in the main process, frames before `open-menu` reaches the
+   * renderer. For those frames the panel is still `inset-0` of a window that is now the screen:
+   * this list is handed ~1040px of height instead of ~560, the section stops needing to scroll at
+   * all, and Chromium clamps `scrollTop` to zero. No commit ran, so nothing put it back — and the
+   * clamp arrives as an ordinary scroll event, so the zero was saved over the position it had just
+   * destroyed. Appearance came back from the wheel at the top, every time.
+   *
+   * A `ResizeObserver` watches what actually changed: this box's own height. It is delivered after
+   * layout and before paint, so the rewrite is never seen, and it does not care which route resized
+   * the window — a box back at a height that can hold the offset gets the offset back.
+   */
+  const ignoreScrollRef = useRef(false);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      /** No box yet: nothing to put back, and `scrollTop` would be dropped on the floor anyway. */
+      if (element.clientHeight === 0) return;
+      /**
+       * Shut the gate for a frame.
+       *
+       * A clamp is not reported in the frame it happens: the event is queued during that layout and
+       * fires in the NEXT frame's scroll steps — which run before anything of ours does, so by the
+       * time the handler could tell it apart it has already saved the zero. A flag cleared from a
+       * `requestAnimationFrame` lifts exactly one frame later, after those scroll steps, which is
+       * the one window in which no scroll report can be trusted.
+       */
+      ignoreScrollRef.current = true;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        ignoreScrollRef.current = false;
+      });
+      if (element.scrollTop !== scrollTopRef.current) element.scrollTop = scrollTopRef.current;
+    });
+    observer.observe(element);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [isOpen]);
 
   /** Search walks every category — searching only the open one forced a guess about where a setting lives. */
   const results = useMemo(() => {
@@ -1259,31 +1591,6 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   }, [sections, sectionId, trimmedQuery, sectionsList]);
 
   const isEmpty = results.length === 0;
-
-  /**
-   * Which sections hold something the user has changed, so the sidebar stops being five words with
-   * nothing behind them.
-   *
-   * The dot marks a section holding something that no longer matches `DEFAULT_UI_CONFIG` — which is
-   * a better answer to "what have I changed here" than a recency stamp would be: it needs no clock,
-   * no per-setting timestamp in the config, and it stays true a month later, when "recently" has
-   * stopped meaning anything.
-   *
-   * A row count sat beside it once and was dropped: how many settings a section has is decided by
-   * this file, not by the user, so the number read the same on every visit and answered nothing.
-   *
-   * It reuses exactly what the per-row revert reuses, so a row and its section can never disagree
-   * about whether it has been touched.
-   */
-  const sectionChanged = useMemo(() => {
-    const changed = {} as Record<SectionId, boolean>;
-    for (const section of sectionsList) {
-      changed[section.id] = (sections[section.id] ?? []).some(
-        (row) => row.configKey && !isAtDefault(row.configKey),
-      );
-    }
-    return changed;
-  }, [sections, isAtDefault, sectionsList]);
 
   if (!isOpen) return null;
 
@@ -1337,13 +1644,6 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                 >
                   <Icon size={15} strokeWidth={1.8} />
                   <span className="zs-nav-label">{section.label}</span>
-                  {/*
-                    The dot is deliberately not a `span`: the collapse rule above takes those away
-                    with the label, and this is the half that still reads on a 60px rail.
-                  */}
-                  {sectionChanged[section.id] && (
-                    <i className="zs-nav-dot" role="img" aria-label="Changed from default" title="Changed from default" />
-                  )}
                 </button>
               );
             })}
@@ -1370,6 +1670,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                * recording exactly what this pair of refs exists to undo.
                */
               if (event.currentTarget.clientHeight === 0) return;
+              /** A resize is still settling: see `ignoreScrollRef`. None of this is the user's doing. */
+              if (ignoreScrollRef.current) return;
               scrollTopRef.current = event.currentTarget.scrollTop;
             }}
           >
@@ -1417,30 +1719,40 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                         />
                       ) : (
                         <div className="zs-rows">
-                          {group.items.map((item) => (
-                            <SettingRow
-                              key={item.key}
-                              item={item}
-                              /**
-                               * Derived here rather than in each row's definition: one rule for
-                               * seventeen rows, and a row that stops matching `DEFAULT_UI_CONFIG`
-                               * cannot go on claiming it is at its default.
-                               */
-                              onResetToDefault={
-                                item.configKey && !isAtDefault(item.configKey)
-                                  ? () => {
-                                      const key = item.configKey as keyof UIConfig;
-                                      update(key, DEFAULT_UI_CONFIG[key]);
-                                      if (key === 'openAtLogin') {
-                                        window.electron?.setLoginItemSettings?.({
-                                          openAtLogin: Boolean(DEFAULT_UI_CONFIG.openAtLogin),
-                                        });
-                                      }
-                                    }
-                                  : undefined
-                              }
-                            />
-                          ))}
+                          {/*
+                            `initial={false}` is what tells a reveal apart from a repaint. The rows
+                            already here when the section opened were not toggled into existence,
+                            and opening all of them together would be a curtain over the list —
+                            only the ones that arrive later, because a switch above them moved,
+                            have anything to animate.
+                          */}
+                          <AnimatePresence initial={false}>
+                            {group.items.map((item) => (
+                              <Collapse key={item.key}>
+                                <SettingRow
+                                  item={item}
+                                  /**
+                                   * Derived here rather than in each row's definition: one rule for
+                                   * seventeen rows, and a row that stops matching `DEFAULT_UI_CONFIG`
+                                   * cannot go on claiming it is at its default.
+                                   */
+                                  onResetToDefault={
+                                    item.configKey && !isAtDefault(item.configKey)
+                                      ? () => {
+                                          const key = item.configKey as keyof UIConfig;
+                                          update(key, DEFAULT_UI_CONFIG[key]);
+                                          if (key === 'openAtLogin') {
+                                            window.electron?.setLoginItemSettings?.({
+                                              openAtLogin: Boolean(DEFAULT_UI_CONFIG.openAtLogin),
+                                            });
+                                          }
+                                        }
+                                      : undefined
+                                  }
+                                />
+                              </Collapse>
+                            ))}
+                          </AnimatePresence>
                         </div>
                       )}
                     </section>
@@ -1574,7 +1886,7 @@ function SettingRow({
 
   return (
     <div
-      className={`zs-row${item.kind === 'range' ? ' is-slider' : ''}${item.kind === 'open' ? ' is-openable' : ''}`
+      className={`zs-row${item.kind === 'range' ? ' is-slider' : ''}${item.kind === 'dockPosition' ? ' is-picker' : ''}${item.kind === 'open' ? ' is-openable' : ''}`
         + `${reorderable ? ' is-reorderable' : ''}${isDragging ? ' is-dragging' : ''}`
         + `${dropEdge === 'above' ? ' is-drop-above' : ''}${dropEdge === 'below' ? ' is-drop-below' : ''}`}
       onClick={item.kind === 'open' ? item.onOpen : undefined}
@@ -1653,6 +1965,9 @@ function SettingRow({
 
         {item.kind === 'range' && <span className="zs-readout">{item.value}</span>}
 
+        {/* The picture answers "where"; this says it in words, for the search and the screen reader. */}
+        {item.kind === 'dockPosition' && <span className="zs-readout is-place">{item.value}</span>}
+
         {item.kind === 'color' && <ColorSettingControl item={item} describedBy={describedBy} />}
 
         {item.kind === 'open' && (
@@ -1709,11 +2024,25 @@ function SettingRow({
       </div>
 
       {/* Under the row, not over it: what it says is the reason the second press exists. */}
-      {item.kind === 'action' && item.confirm && confirming && (
-        <p className="zs-confirm-body" role="alert">
-          <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
-          <span>{item.confirm.body}</span>
-        </p>
+      <AnimatePresence initial={false}>
+        {item.kind === 'action' && item.confirm && confirming && (
+          <Collapse key="confirm">
+            <p className="zs-confirm-body" role="alert">
+              <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
+              <span>{item.confirm.body}</span>
+            </p>
+          </Collapse>
+        )}
+      </AnimatePresence>
+
+      {item.kind === 'dockPosition' && (
+        <DockPositionPicker
+          value={item.current as DockPosition}
+          onChange={(position) => item.onChange?.(position)}
+          labelledBy={`${item.key}-label`}
+          describedBy={describedBy}
+          occupied={item.occupied}
+        />
       )}
 
       {item.kind === 'range' && (
@@ -1756,6 +2085,16 @@ function normalizeHexInput(value: string): string | null {
  * committing, focus returning to the trigger on close, and the active option kept in view. Those
  * are not embellishments on a dropdown — for anyone not using a mouse, they ARE the dropdown.
  */
+/**
+ * The shell, which is both where the popup is painted and what it is measured against.
+ *
+ * It has to be the same element for both or the arithmetic is against one box and the rendering
+ * against another. `document.body` is not an option: the theme tokens and `dir` cascade from the
+ * shell, so a popup parented to the body would come out unthemed and, in Arabic, the wrong way
+ * round.
+ */
+const portalTarget = () => document.getElementById('settings-container');
+
 function SelectSettingControl({ item, describedBy }: { item: SettingItem; describedBy?: string }) {
   const reduceMotion = useReducedMotion();
   const choices = item.choices ?? [];
@@ -1776,20 +2115,29 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
   const listId = `${item.key}-listbox`;
 
   /**
-   * Anchored to the trigger in viewport coordinates, and re-measured rather than remembered.
+   * Anchored to the trigger, measured against the shell, re-measured rather than remembered.
    *
-   * The row lives inside `.zs-scroll`, so an absolutely positioned popup would be clipped by that
-   * scroller as soon as it was taller than the space left below the row. Fixed escapes the clip —
-   * the shell sets no transform while it is open, so nothing re-parents the containing block — but
-   * fixed also means the popup does not travel with the row, hence the listeners below.
+   * Two constraints meet here. The row lives inside `.zs-scroll`, so a popup positioned within the
+   * row would be clipped by that scroller the moment it was taller than the space beneath — hence
+   * the portal out to the shell. But the shell sits inside `PanelTransition`'s `motion.div`, which
+   * carries `filter: blur()`, and a filter makes its element the containing block for any
+   * `position: fixed` descendant. So "fixed" here is not viewport-relative; it is relative to a box
+   * starting below the title bar, and the first version of this menu duly opened a title-bar's
+   * height too low. Absolute coordinates measured against the shell are immune to that, and to
+   * whatever a future ancestor does with transforms.
+   *
+   * Re-measured on scroll and resize because an absolute popup does not travel with a row that
+   * scrolls underneath it.
    */
   const measure = useCallback(() => {
     const trigger = triggerRef.current;
-    if (!trigger) return;
+    const container = portalTarget();
+    if (!trigger || !container) return;
+    const bounds = container.getBoundingClientRect();
     setPlacement(
       selectMenuPlacement(
         trigger.getBoundingClientRect(),
-        { width: window.innerWidth, height: window.innerHeight },
+        { top: bounds.top, left: bounds.left, width: bounds.width, height: bounds.height },
         choices.length,
       ),
     );
@@ -1971,7 +2319,7 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
             ))}
           </motion.div>
         </>,
-        document.getElementById('settings-container') ?? document.body,
+        portalTarget() ?? document.body,
       )}
     </div>
   );
@@ -2181,6 +2529,30 @@ function SettingsEditor({
   focusAppId?: string | null;
   onFocusApplied?: () => void;
 }) {
+  /** Which dock icon the glyph picker is open for. Unused by every other editor kind. */
+  const [dockIconItemId, setDockIconItemId] = useState<string | null>(null);
+  /**
+   * Whether a workspace opens as controls or as its file. Remembered per machine: someone who
+   * edits the text does it every time, and a toggle that forgets is one more click every time.
+   */
+  const [workspaceView, setWorkspaceViewState] = useState<'visual' | 'file'>(() => {
+    try {
+      return window.localStorage.getItem(WORKSPACE_VIEW_KEY) === 'file' ? 'file' : 'visual';
+    } catch {
+      return 'visual';
+    }
+  });
+  const fileEditorRef = useRef<WorkspaceFileEditorHandle>(null);
+  const isFileView = editor.kind === 'workspace' && workspaceView === 'file';
+  /** A draft in the file view is applied on the way out, and a broken one keeps the dialog open. */
+  const flushFile = () => !isFileView || !fileEditorRef.current || fileEditorRef.current.flush();
+  const setWorkspaceView = (next: 'visual' | 'file') => {
+    if (next === workspaceView || !flushFile()) return;
+    setWorkspaceViewState(next);
+    try { window.localStorage.setItem(WORKSPACE_VIEW_KEY, next); } catch { /* per-session then */ }
+  };
+  const leave = () => { if (flushFile()) close(); };
+
   let title = 'Edit setting';
   let description = 'Changes are applied immediately.';
   let content: React.ReactNode = null;
@@ -2197,6 +2569,17 @@ function SettingsEditor({
     );
   }
 
+  if (editor.kind === 'backKey') {
+    title = 'Back key';
+    description = 'One key, pressed on its own, to step out of a folder.';
+    content = (
+      <BackKeyRecorder
+        value={config.radialBackKey}
+        onChange={(next) => update('radialBackKey', next)}
+      />
+    );
+  }
+
   if (editor.kind === 'blocked') {
     title = 'Protected applications';
     description = 'Choose installed applications; Rovyl handles process matching automatically.';
@@ -2208,14 +2591,111 @@ function SettingsEditor({
     );
   }
 
+  if (editor.kind === 'dockShortcuts') {
+    const dock = normalizeShortcutDock(config.shortcutDock);
+    title = 'Dock icons';
+    description = 'What sits in the strip beside the open wheel. Drag to reorder.';
+    /**
+     * The glyph picker is held HERE rather than inside the list, by item ID and not by position:
+     * the list reorders and deletes underneath it, and an index would quietly start editing the
+     * neighbour. Same reason `WorkspaceManager` holds `iconEditItemId`.
+     */
+    const iconEditItem = dockIconItemId
+      ? dock.items.find((item) => item.id === dockIconItemId) ?? null
+      : null;
+    /** By id, against the dock as it is when the patch lands — "Default" fetches after an await. */
+    const patchDockItem = (id: string, patch: (item: AppItem) => Partial<AppItem> | null) =>
+      setConfig((current) => {
+        const latest = normalizeShortcutDock(current.shortcutDock);
+        let changed = false;
+        const items = latest.items.map((item) => {
+          if (item.id !== id) return item;
+          const next = patch(item);
+          if (!next) return item;
+          changed = true;
+          return { ...item, ...next };
+        });
+        return changed ? { ...current, shortcutDock: { ...latest, items } } : current;
+      });
+    /** The dock has no healing pass, but the same rules keep the two editors saying the same thing. */
+    const setDockGlyph = (item: AppItem, iconName: string) =>
+      patchDockItem(item.id, () => ({
+        iconName,
+        iconSource: itemFindsOwnIcon(item) ? 'custom' : 'lucide',
+        customIconUrl: undefined,
+        customIconFile: undefined,
+      }));
+    const resetDockIcon = (item: AppItem) => {
+      patchDockItem(item.id, () => ({
+        iconName: itemDefaultGlyph(item),
+        iconSource: 'lucide',
+        customIconUrl: undefined,
+        customIconFile: undefined,
+      }));
+      if (!itemFindsOwnIcon(item)) return;
+      void resolveAutomaticIcon(item).then((found) => {
+        if (found) patchDockItem(item.id, (now) => (now.iconSource === 'custom' || now.customIconUrl ? null : found));
+      });
+    };
+    content = (
+      <>
+        <DockShortcutsManager
+          dock={dock}
+          onChange={(items) => update('shortcutDock', { ...dock, items })}
+          showToast={showToast}
+          onPickIcon={setDockIconItemId}
+        />
+        <AnimatePresence>
+          {iconEditItem && (
+            <IconPickerModal
+              key="dock-icon"
+              titleId="dock-icon-modal-title"
+              title="Dock icon"
+              hint={`Shown in the dock for “${iconEditItem.label || 'this shortcut'}”.`}
+              selectedIcon={itemFallbackIcon(iconEditItem)}
+              picture={iconEditItem.customIconUrl
+                ? {
+                    url: iconEditItem.customIconUrl,
+                    file: iconEditItem.customIconFile,
+                    label: itemIconSummary(iconEditItem).title,
+                    custom: iconEditItem.iconSource === 'custom',
+                  }
+                : null}
+              canReset={!itemIconIsDefault(iconEditItem)}
+              onSelect={(iconName) => setDockGlyph(iconEditItem, iconName)}
+              onPicture={(pick) =>
+                patchDockItem(iconEditItem.id, () => ({
+                  iconSource: 'custom',
+                  customIconUrl: pick.url,
+                  customIconFile: pick.file,
+                }))}
+              onReset={() => resetDockIcon(iconEditItem)}
+              onClose={() => setDockIconItemId(null)}
+            />
+          )}
+        </AnimatePresence>
+      </>
+    );
+  }
+
 
   if (editor.kind === 'workspace') {
     const index = editor.index;
     const workspace = config.workspaces[index];
     if (!workspace) return null;
     title = workspace.name;
-    description = 'Organize shortcuts and control how this workspace behaves.';
-    content = (
+    description = isFileView
+      ? 'Edit the whole workspace as text — to move it, share it or change many shortcuts at once.'
+      : 'Organize shortcuts and control how this workspace behaves.';
+    content = isFileView ? (
+      <WorkspaceFileEditor
+        ref={fileEditorRef}
+        workspace={workspace}
+        isActive={config.activeWorkspaceIndex === index}
+        onApply={(patch) => updateWorkspace(index, patch)}
+        showToast={showToast}
+      />
+    ) : (
       <WorkspaceManager
         workspace={workspace}
         workspaceIndex={index}
@@ -2241,9 +2721,9 @@ function SettingsEditor({
   }
 
   return (
-    <div className="zs-editor-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <div className="zs-editor-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) leave(); }}>
       <motion.div
-        className={`zs-editor${editor.kind === 'workspace' || editor.kind === 'blocked' ? ' is-workspace' : ''}`}
+        className={`zs-editor${editor.kind === 'workspace' || editor.kind === 'blocked' || editor.kind === 'dockShortcuts' ? ' is-workspace' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -2257,13 +2737,41 @@ function SettingsEditor({
             <h2>{title}</h2>
             <p>{description}</p>
           </div>
-          <button type="button" onClick={close} aria-label="Close">
-            <X size={15} strokeWidth={1.9} />
-          </button>
+          <div className="zs-editor-head-actions">
+            {editor.kind === 'workspace' && (
+              <div className="zs-view-toggle" role="radiogroup" aria-label="Edit as">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={!isFileView}
+                  className={!isFileView ? 'is-selected' : ''}
+                  data-tip="Edit visually"
+                  aria-label="Edit visually"
+                  onClick={() => setWorkspaceView('visual')}
+                >
+                  <LayoutList size={14} strokeWidth={1.9} />
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={isFileView}
+                  className={isFileView ? 'is-selected' : ''}
+                  data-tip="Edit as a file"
+                  aria-label="Edit as a file"
+                  onClick={() => setWorkspaceView('file')}
+                >
+                  <Braces size={14} strokeWidth={1.9} />
+                </button>
+              </div>
+            )}
+            <button type="button" className="zs-editor-close" onClick={leave} aria-label="Close">
+              <X size={15} strokeWidth={1.9} />
+            </button>
+          </div>
         </header>
-        <div className="zs-editor-body">{content}</div>
+        <div className={`zs-editor-body${isFileView ? ' is-file' : ''}`}>{content}</div>
         <footer>
-          <button type="button" className="zs-btn is-primary" onClick={close}>Done</button>
+          <button type="button" className="zs-btn is-primary" onClick={leave}>Done</button>
         </footer>
       </motion.div>
     </div>
@@ -2271,7 +2779,9 @@ function SettingsEditor({
 }
 
 
-type WorkspaceAddMode = 'app' | 'url' | 'folder' | 'file' | null;
+const WORKSPACE_VIEW_KEY = 'rovyl.workspaceEditorView';
+
+type WorkspaceAddMode = 'app' | 'url' | 'folder' | 'file' | 'command' | null;
 
 const APPS_PAGE_SIZE = 40;
 
@@ -2280,6 +2790,7 @@ function itemTypeLabel(item: AppItem) {
   if (item.commandType === 'url') return 'URL';
   if (item.commandType === 'folder') return 'Folder';
   if (item.commandType === 'file') return 'File';
+  if (item.commandType === 'command') return 'Command';
   return 'Application';
 }
 
@@ -2381,11 +2892,154 @@ function isPathLikeCommand(command: string): boolean {
   );
 }
 
+/**
+ * The Lucide glyph a shortcut draws when it has no bitmap of its own.
+ *
+ * A saved `iconName` comes FIRST, for every kind. Folders and URLs used to skip it and return
+ * 'Folder'/'Globe' unconditionally, which made this panel disagree with the wheel: `RadialMenu`
+ * has always drawn `getIcon(app.iconName)`, so a folder whose glyph had been changed showed the
+ * new icon on the wheel and a generic folder in the list that changed it. The per-type names stay
+ * as the fallback for items that carry no name at all (discovery writes `iconName: ''`).
+ */
 function itemFallbackIcon(item: AppItem) {
+  const picked = item.iconName?.trim();
+  if (picked) return picked;
   if (item.type === 'folder' || item.commandType === 'folder') return 'Folder';
   if (item.commandType === 'url') return 'Globe';
-  if (item.commandType === 'file') return item.iconName || 'File';
-  return item.iconName || 'AppWindow';
+  if (item.commandType === 'file') return 'File';
+  if (item.commandType === 'command') return DEFAULT_COMMAND_ICON;
+  return 'AppWindow';
+}
+
+/** The glyph a folder shortcut wears until somebody picks another one. */
+const DEFAULT_FOLDER_ICON = 'Folder';
+/** And a command's. A typed line has no file to pull a bitmap from either. */
+const DEFAULT_COMMAND_ICON = 'TerminalSquare';
+
+/**
+ * Whether Rovyl finds this shortcut a picture by itself: the program's icon, the document type's,
+ * the site's favicon. For these, "Default" means that picture, and a glyph chosen instead has to
+ * be marked as the user's (`iconSource: 'custom'`) or the healing pass would put the picture back.
+ * Folders, commands and groups have no picture of their own — their glyph is the default.
+ */
+function itemFindsOwnIcon(item: AppItem): boolean {
+  return item.type !== 'folder' && (item.commandType === 'app' || item.commandType === 'file' || item.commandType === 'url');
+}
+
+/** The glyph "Default" goes back to for this kind of shortcut — the one the add form gives it. */
+function itemDefaultGlyph(item: AppItem) {
+  if (item.type === 'folder' || item.commandType === 'folder') return DEFAULT_FOLDER_ICON;
+  if (item.commandType === 'command') return DEFAULT_COMMAND_ICON;
+  if (item.commandType === 'url') return 'Globe';
+  if (item.commandType === 'file') return 'File';
+  return 'AppWindow';
+}
+
+/** Whether the icon is still what the shortcut came with, so "Default" has nothing to undo. */
+function itemIconIsDefault(item: AppItem): boolean {
+  if (item.iconSource === 'custom') return false;
+  if (itemFindsOwnIcon(item)) return true;
+  return !item.customIconUrl && itemFallbackIcon(item) === itemDefaultGlyph(item);
+}
+
+/** One line naming the icon in force, for the Icon field. */
+function itemIconSummary(item: AppItem): { title: string; detail: string } {
+  if (item.iconSource === 'custom' && item.customIconUrl) {
+    return { title: describeIconFile(item.customIconFile) || 'Custom picture', detail: 'Your own picture' };
+  }
+  if (item.iconSource === 'custom') return { title: itemFallbackIcon(item), detail: 'Your own glyph' };
+  if (itemFindsOwnIcon(item)) {
+    const title = item.commandType === 'url' ? 'Site icon' : item.commandType === 'file' ? 'File type icon' : 'Program icon';
+    return { title, detail: 'Found automatically · click to choose your own' };
+  }
+  return { title: itemFallbackIcon(item), detail: 'Shown on the wheel' };
+}
+
+/** "Folder icon", "Website icon"… — the modal's title. */
+function itemIconModalTitle(item: AppItem): string {
+  if (item.type === 'folder') return 'Group icon';
+  switch (item.commandType) {
+    case 'url': return 'Website icon';
+    case 'folder': return 'Folder icon';
+    case 'file': return 'File icon';
+    case 'command': return 'Command icon';
+    default: return 'App icon';
+  }
+}
+
+/**
+ * The icon Rovyl would have found for this shortcut, fetched again after "Default". The healing
+ * pass cannot be relied on for it: it tries each target once per session, and a shortcut whose icon
+ * was already found this session counts as tried.
+ */
+async function resolveAutomaticIcon(item: AppItem): Promise<Partial<AppItem> | null> {
+  try {
+    if (item.commandType === 'url') {
+      const icon = await resolveWebsiteIconFields(item.command);
+      return icon?.customIconUrl ? { customIconUrl: icon.customIconUrl, iconSource: icon.iconSource } : null;
+    }
+    const url = await window.electron?.getFileIcon?.(item.command);
+    return url ? { customIconUrl: url, iconSource: 'native' } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which shell reads a command shortcut, and whether its window shows. Shared by the add form and the
+ * row editor so the two cannot drift apart.
+ */
+function CommandRunOptions({
+  shell,
+  windowMode,
+  onShell,
+  onWindow,
+}: {
+  shell: 'powershell' | 'cmd';
+  windowMode: 'open' | 'hidden';
+  onShell: (value: 'powershell' | 'cmd') => void;
+  onWindow: (value: 'open' | 'hidden') => void;
+}) {
+  return (
+    <div className="zs-launch-options zs-command-options">
+      <div>
+        <b>Shell</b>
+        <small>{shell === 'cmd' ? 'Runs with Command Prompt (cmd.exe).' : 'Runs with Windows PowerShell.'}</small>
+      </div>
+      <div className="zs-segmented" role="radiogroup" aria-label="Shell">
+        {([['powershell', 'PowerShell'], ['cmd', 'Command Prompt']] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={shell === value}
+            className={shell === value ? 'is-selected' : ''}
+            onClick={() => onShell(value)}
+          >{label}</button>
+        ))}
+      </div>
+      <div>
+        <b>Window</b>
+        <small>
+          {windowMode === 'hidden'
+            ? 'Runs in the background with no window. Errors in the first moments still show a card.'
+            : 'Opens a console that stays open, so you can read the output.'}
+        </small>
+      </div>
+      <div className="zs-segmented" role="radiogroup" aria-label="Window">
+        {([['open', 'Open'], ['hidden', 'Hidden']] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={windowMode === value}
+            className={windowMode === value ? 'is-selected' : ''}
+            onClick={() => onWindow(value)}
+          >{label}</button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -2427,6 +3081,25 @@ function ItemBitmapOrGlyph({
   return <Icon size={glyphSize} strokeWidth={glyphStroke} />;
 }
 
+/** The workspace's own icon: its picture when it has one, its glyph otherwise or if the picture is gone. */
+function WorkspaceIconArt({ workspace }: { workspace: Workspace }) {
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => setFailed(false), [workspace.pickerIconUrl]);
+  if (workspace.pickerIconUrl && !failed) {
+    return (
+      <img
+        src={workspace.pickerIconUrl}
+        alt=""
+        className="zs-workspace-icon-img"
+        draggable={false}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  const Glyph = getIcon(workspace.pickerIconName?.trim() || 'Layers');
+  return <Glyph size={24} strokeWidth={1.6} />;
+}
+
 function WorkspaceItemIcon({ item }: { item: AppItem }) {
   return (
     <span className="zs-workspace-app-icon" aria-hidden>
@@ -2440,6 +3113,161 @@ function WorkspaceItemIcon({ item }: { item: AppItem }) {
     </span>
   );
 }
+
+/** A picture the item is drawn with right now — one the user chose, or one Rovyl found. */
+interface PictureInForce extends CustomIconPick {
+  /** What the footer calls it: a file name, "Program icon"… */
+  label: string;
+  /** Chosen by the user, as opposed to found automatically. */
+  custom: boolean;
+}
+
+/**
+ * The icon chooser, as a modal — the workspace's icon and every shortcut's go through it.
+ *
+ * Two tabs. Glyph is the Lucide grid it always was. Picture takes a file, a drop or a paste: a PNG,
+ * an SVG, an .ico, or one of the icons inside a program or DLL (`CustomIconPanel`). Whichever was
+ * used last is the icon; the other is kept only as the glyph a missing picture falls back to.
+ *
+ * Mounting IS opening: the caller holds the "which icon" state, `AnimatePresence` handles the exit,
+ * and `onClose` is the only way out — the escape key, the backdrop, the X and Done all take it.
+ */
+function IconPickerModal({
+  titleId,
+  title,
+  hint,
+  selectedIcon,
+  picture,
+  canReset,
+  onSelect,
+  onPicture,
+  onReset,
+  onClose,
+}: {
+  titleId: string;
+  title: string;
+  hint: string;
+  /** The glyph name in force — never empty; with a picture in force it is only the fallback. */
+  selectedIcon: string;
+  picture: PictureInForce | null;
+  /** Whether "Default" has anything to undo. */
+  canReset: boolean;
+  onSelect: (iconName: string) => void;
+  onPicture: (pick: CustomIconPick) => void;
+  onReset: () => void;
+  onClose: () => void;
+}) {
+  /** A modal that only closes with the mouse is a modal that traps whoever uses the keyboard. */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseRef.current();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  /** Opens where the icon in force lives: a shortcut wearing a picture is most likely after another. */
+  const [tab, setTab] = useState<'glyph' | 'picture'>(picture ? 'picture' : 'glyph');
+  const [pictureFailed, setPictureFailed] = useState(false);
+  useEffect(() => setPictureFailed(false), [picture?.url]);
+  const PickedIcon = getIcon(selectedIcon);
+  const showPicture = Boolean(picture) && !pictureFailed;
+
+  return (
+    <motion.div
+      className="zs-icon-modal-layer"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.14 }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <motion.div
+        className="zs-icon-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        initial={{ opacity: 0, scale: 0.97, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.98, y: 4 }}
+        transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+        /** A click inside must not close what a click outside closes. */
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <b id={titleId}>{title}</b>
+            <small>{hint}</small>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close icon picker">
+            <X size={14} />
+          </button>
+        </header>
+        <div className="zs-icon-modal-tabs">
+          <div className="zs-segmented" role="tablist" aria-label="Icon kind">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'glyph'}
+              className={tab === 'glyph' ? 'is-selected' : ''}
+              onClick={() => setTab('glyph')}
+            >
+              <Shapes size={13} strokeWidth={1.8} /> Glyph
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'picture'}
+              className={tab === 'picture' ? 'is-selected' : ''}
+              onClick={() => setTab('picture')}
+            >
+              <ImageGlyph size={13} strokeWidth={1.8} /> Picture
+            </button>
+          </div>
+        </div>
+        <div className="zs-icon-modal-body" role="tabpanel">
+          {tab === 'glyph' ? (
+            /** No cell lit while a picture is drawn: the glyph is not what the wheel shows. */
+            <IconPicker selectedIcon={picture ? '' : selectedIcon} onSelect={onSelect} />
+          ) : (
+            <CustomIconPanel current={picture?.custom ? picture : null} onPick={onPicture} />
+          )}
+        </div>
+        {/**
+          * Picking writes straight through, so once a glyph was clicked the modal had
+          * nothing left to do — and no way out but the X in its corner, which reads as
+          * discarding rather than confirming. The footer names what is set and ends the
+          * choice on a button, the way every other editor here does.
+          */}
+        <footer>
+          <span className="zs-icon-modal-pick">
+            {showPicture ? (
+              <img src={picture!.url} alt="" draggable={false} onError={() => setPictureFailed(true)} />
+            ) : (
+              <PickedIcon size={16} strokeWidth={1.7} />
+            )}
+            <b>{showPicture ? picture!.label : selectedIcon}</b>
+          </span>
+          <span className="zs-icon-modal-acts">
+            {canReset && (
+              <button type="button" className="zs-btn" onClick={onReset}>
+                <RotateCcw size={13} /> Default
+              </button>
+            )}
+            <button type="button" className="zs-btn is-primary" onClick={onClose}>Done</button>
+          </span>
+        </footer>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 
 
 /**
@@ -2648,9 +3476,18 @@ function WorkspaceManager({
   const [folderLabel, setFolderLabel] = useState('');
   const [filePath, setFilePath] = useState('');
   const [fileLabel, setFileLabel] = useState('');
+  const [commandLine, setCommandLine] = useState('');
+  const [commandLabel, setCommandLabel] = useState('');
+  const [commandDir, setCommandDir] = useState('');
+  const [commandShell, setCommandShell] = useState<'powershell' | 'cmd'>('powershell');
+  const [commandWindow, setCommandWindow] = useState<'open' | 'hidden'>('open');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [isIconPickerOpen, setIsIconPickerOpen] = useState(false);
-  const [editingIconForIndex, setEditingIconForIndex] = useState<number | null>(null);
+  /**
+   * Which shortcut's icon the picker is open for, held by id rather than by position: the list
+   * reorders and deletes underneath it, and an index would quietly start editing the neighbour.
+   */
+  const [iconEditItemId, setIconEditItemId] = useState<string | null>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -2667,20 +3504,6 @@ function WorkspaceManager({
     return () => window.clearTimeout(timer);
   }, [focusAppId, onFocusApplied, workspace.apps]);
 
-  /** A modal that only closes with the mouse is a modal that traps whoever uses the keyboard. */
-  useEffect(() => {
-    if (!isIconPickerOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      setIsIconPickerOpen(false);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [isIconPickerOpen]);
-  const WorkspaceIcon = getIcon(workspace.pickerIconName?.trim() || 'Layers');
-
   const addItem = (item: AppItem, openEditor = false) => {
     const newIndex = workspace.apps.length;
     updateWorkspace(workspaceIndex, { apps: [...workspace.apps, item] });
@@ -2694,6 +3517,11 @@ function WorkspaceManager({
     setFolderLabel('');
     setFilePath('');
     setFileLabel('');
+    setCommandLine('');
+    setCommandLabel('');
+    setCommandDir('');
+    setCommandShell('powershell');
+    setCommandWindow('open');
     setEditingIndex(openEditor ? newIndex : null);
   };
 
@@ -2886,6 +3714,35 @@ function WorkspaceManager({
     });
   };
 
+  /** `npm run dev -- --port 3000` → `npm run dev`: short enough for a wheel label. */
+  const commandNameLabel = (value: string) => {
+    const words = value.trim().split(/\s+/).filter(Boolean);
+    const head = words.slice(0, 3).join(' ');
+    return head.length > 24 ? `${head.slice(0, 23).trimEnd()}…` : head || 'Command';
+  };
+
+  const chooseCommandDir = async () => {
+    const path = await window.electron?.selectFolder?.();
+    if (path) setCommandDir(path);
+  };
+
+  /**
+   * A typed command line. Nothing is checked here beyond it being non-empty: the shell is the only
+   * judge of what the line means, and a failed run comes back as a launch card like any other.
+   */
+  const addCommand = () => {
+    const line = commandLine.trim();
+    if (!line) return;
+    const dir = commandDir.trim();
+    addItem({
+      id: crypto.randomUUID(), type: 'app', label: commandLabel.trim() || commandNameLabel(line),
+      iconName: DEFAULT_COMMAND_ICON, iconSource: 'lucide', command: line,
+      commandType: 'command', description: 'Command',
+      commandShell, commandWindow,
+      ...(dir ? { workingDirectory: dir } : {}),
+    });
+  };
+
   /**
    * Dragging in the shortcut list.
    *
@@ -2976,6 +3833,73 @@ function WorkspaceManager({
   };
 
   /**
+   * The icon modal's writes, by id and against the workspace as it is when they land: a picture is
+   * stored and a "Default" icon fetched after an await, and by then the list may have moved.
+   */
+  const patchItemById = (id: string, patch: (item: AppItem) => Partial<AppItem> | null) => {
+    updateWorkspace(workspaceIndex, (current) => {
+      let changed = false;
+      const apps = current.apps.map((item) => {
+        if (item.id !== id) return item;
+        const next = patch(item);
+        if (!next) return item;
+        changed = true;
+        return { ...item, ...next };
+      });
+      return changed ? { apps } : {};
+    });
+  };
+
+  const setItemGlyph = (item: AppItem, iconName: string) => {
+    patchItemById(item.id, () => ({
+      iconName,
+      /** On a shortcut that finds its own picture, a glyph is a choice the healing pass must leave alone. */
+      iconSource: itemFindsOwnIcon(item) ? 'custom' : 'lucide',
+      customIconUrl: undefined,
+      customIconFile: undefined,
+    }));
+  };
+
+  const setItemPicture = (item: AppItem, pick: CustomIconPick) => {
+    patchItemById(item.id, () => ({ iconSource: 'custom', customIconUrl: pick.url, customIconFile: pick.file }));
+  };
+
+  const resetItemIcon = (item: AppItem) => {
+    const glyph = itemDefaultGlyph(item);
+    if (!itemFindsOwnIcon(item)) {
+      patchItemById(item.id, () => ({ iconName: glyph, iconSource: 'lucide', customIconUrl: undefined, customIconFile: undefined }));
+      return;
+    }
+    /** A site with no favicon is a glyph, not a wait; a program is 'native' so the wheel shows it is coming. */
+    patchItemById(item.id, () => ({
+      iconName: glyph,
+      iconSource: item.commandType === 'url' ? 'lucide' : 'native',
+      customIconUrl: undefined,
+      customIconFile: undefined,
+    }));
+    void resolveAutomaticIcon(item).then((found) => {
+      if (!found) return;
+      /** Only onto the shortcut still waiting for it — not one that picked something else meanwhile. */
+      patchItemById(item.id, (now) => (now.iconSource === 'custom' || now.customIconUrl ? null : found));
+    });
+  };
+
+  const workspacePicture: PictureInForce | null = workspace.pickerIconUrl
+    ? {
+        url: workspace.pickerIconUrl,
+        file: workspace.pickerIconFile,
+        label: describeIconFile(workspace.pickerIconFile) || 'Custom picture',
+        custom: true,
+      }
+    : null;
+
+  /** The shortcut the icon picker is open for, looked up fresh so a stale id closes the modal. */
+  const iconEditIndex = iconEditItemId
+    ? workspace.apps.findIndex((item) => item.id === iconEditItemId)
+    : -1;
+  const iconEditItem = iconEditIndex === -1 ? null : workspace.apps[iconEditIndex];
+
+  /**
    * Self-correction: items saved as IDEs before this check existed (the Antigravity agent, for
    * example) would go on forever asking for recents that are not there. As soon as main confirms
    * there is no profile, the flag leaves the config.
@@ -3031,7 +3955,7 @@ function WorkspaceManager({
             aria-label="Change workspace icon"
             title="Change icon"
           >
-            <WorkspaceIcon size={24} strokeWidth={1.6} />
+            <WorkspaceIconArt workspace={workspace} />
             <Pencil size={10} strokeWidth={2} />
           </button>
           <label className="zs-workspace-name-field">
@@ -3119,44 +4043,57 @@ function WorkspaceManager({
        */}
       <AnimatePresence>
         {isIconPickerOpen && (
-          <motion.div
-            className="zs-icon-modal-layer"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14 }}
-            onClick={() => setIsIconPickerOpen(false)}
-            role="presentation"
-          >
-            <motion.div
-              className="zs-icon-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="ws-icon-modal-title"
-              initial={{ opacity: 0, scale: 0.97, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.98, y: 4 }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-              /** A click inside must not close what a click outside closes. */
-              onClick={(event) => event.stopPropagation()}
-            >
-              <header>
-                <div>
-                  <b id="ws-icon-modal-title">Workspace icon</b>
-                  <small>Shown in the wheel picker, and on the workspace card.</small>
-                </div>
-                <button type="button" onClick={() => setIsIconPickerOpen(false)} aria-label="Close icon picker">
-                  <X size={14} />
-                </button>
-              </header>
-              <div className="zs-icon-modal-body">
-                <IconPicker
-                  selectedIcon={workspace.pickerIconName?.trim() || 'Layers'}
-                  onSelect={(iconName) => updateWorkspace(workspaceIndex, { pickerIconName: iconName })}
-                />
-              </div>
-            </motion.div>
-          </motion.div>
+          <IconPickerModal
+            key="workspace-icon"
+            titleId="ws-icon-modal-title"
+            title="Workspace icon"
+            hint="Shown in the wheel picker, and on the workspace card."
+            selectedIcon={workspace.pickerIconName?.trim() || 'Layers'}
+            picture={workspacePicture}
+            canReset={Boolean(workspace.pickerIconUrl) || (workspace.pickerIconName?.trim() || 'Layers') !== 'Layers'}
+            onSelect={(iconName) => updateWorkspace(workspaceIndex, {
+              pickerIconName: iconName,
+              pickerIconUrl: undefined,
+              pickerIconFile: undefined,
+            })}
+            onPicture={(pick) => updateWorkspace(workspaceIndex, { pickerIconUrl: pick.url, pickerIconFile: pick.file })}
+            onReset={() => updateWorkspace(workspaceIndex, {
+              pickerIconName: undefined,
+              pickerIconUrl: undefined,
+              pickerIconFile: undefined,
+            })}
+            onClose={() => setIsIconPickerOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/**
+       * And the same modal for one shortcut's icon. Folders needed it first — every one arrived
+       * wearing the same `Folder` glyph — and now every kind has it: an app can wear another
+       * program's icon, a site a logo, a command a picture.
+       */}
+      <AnimatePresence>
+        {iconEditItem && (
+          <IconPickerModal
+            key="item-icon"
+            titleId="item-icon-modal-title"
+            title={itemIconModalTitle(iconEditItem)}
+            hint={`Shown on the wheel for “${iconEditItem.label || 'this shortcut'}”.`}
+            selectedIcon={itemFallbackIcon(iconEditItem)}
+            picture={iconEditItem.customIconUrl
+              ? {
+                  url: iconEditItem.customIconUrl,
+                  file: iconEditItem.customIconFile,
+                  label: itemIconSummary(iconEditItem).title,
+                  custom: iconEditItem.iconSource === 'custom',
+                }
+              : null}
+            canReset={!itemIconIsDefault(iconEditItem)}
+            onSelect={(iconName) => setItemGlyph(iconEditItem, iconName)}
+            onPicture={(pick) => setItemPicture(iconEditItem, pick)}
+            onReset={() => resetItemIcon(iconEditItem)}
+            onClose={() => setIconEditItemId(null)}
+          />
         )}
       </AnimatePresence>
 
@@ -3168,6 +4105,7 @@ function WorkspaceManager({
             <button type="button" className={addMode === 'url' ? 'is-active' : ''} onClick={() => setAddMode(addMode === 'url' ? null : 'url')}><Globe2 size={14} /> URL</button>
             <button type="button" className={addMode === 'folder' ? 'is-active' : ''} onClick={() => setAddMode(addMode === 'folder' ? null : 'folder')}><FolderOpen size={14} /> Folder</button>
             <button type="button" className={addMode === 'file' ? 'is-active' : ''} onClick={() => setAddMode(addMode === 'file' ? null : 'file')}><FileGlyph size={14} /> File</button>
+            <button type="button" className={addMode === 'command' ? 'is-active' : ''} onClick={() => setAddMode(addMode === 'command' ? null : 'command')}><TerminalSquare size={14} /> Command</button>
           </div>
         </div>
 
@@ -3331,6 +4269,36 @@ function WorkspaceManager({
                   <button type="button" className="zs-btn is-primary" disabled={!filePath} onClick={() => void addFile()}><Plus size={14} /> Add file</button>
                 </div>
               )}
+              {addMode === 'command' && (
+                <div className="zs-add-form is-command">
+                  <label className="zs-field is-wide">
+                    <span>Command line</span>
+                    <input
+                      autoFocus
+                      value={commandLine}
+                      spellCheck={false}
+                      onChange={(event) => setCommandLine(event.target.value)}
+                      placeholder={commandShell === 'cmd' ? 'ipconfig /flushdns && pause' : 'git pull; npm run dev'}
+                      onKeyDown={(event) => { if (event.key === 'Enter') addCommand(); }}
+                    />
+                  </label>
+                  <label className="zs-field"><span>Name</span><input value={commandLabel} onChange={(event) => setCommandLabel(event.target.value)} placeholder={commandLine.trim() ? commandNameLabel(commandLine) : 'Name shown on the wheel'} onKeyDown={(event) => { if (event.key === 'Enter') addCommand(); }} /></label>
+                  <div className="zs-field is-with-action">
+                    <span>Run in</span>
+                    <div className="zs-field-row">
+                      <input value={commandDir} spellCheck={false} onChange={(event) => setCommandDir(event.target.value)} placeholder="Your user folder" aria-label="Working folder" />
+                      <button type="button" className="zs-btn" onClick={() => void chooseCommandDir()}><FolderOpen size={13} /> Browse</button>
+                    </div>
+                  </div>
+                  <CommandRunOptions
+                    shell={commandShell}
+                    windowMode={commandWindow}
+                    onShell={setCommandShell}
+                    onWindow={setCommandWindow}
+                  />
+                  <button type="button" className="zs-btn is-primary" disabled={!commandLine.trim()} onClick={addCommand}><Plus size={14} /> Add command</button>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -3405,166 +4373,248 @@ function WorkspaceManager({
                   <button type="button" onClick={() => removeItem(index)} aria-label={`Remove ${item.label}`}><Trash2 size={13} /></button>
                 </div>
               </div>
+              {/*
+                The editor opens the row rather than replacing it, and brings itself into view:
+                the pencil sits at the right of a row that is often the last one on screen, so the
+                form it opens was frequently below the fold the instant it existed.
+              */}
+              <AnimatePresence initial={false}>
               {editingIndex === index && (
-                <div className="zs-workspace-item-editor">
-                  <label className="zs-field"><span>Name</span><input value={item.label} onChange={(event) => updateItem(index, { label: event.target.value })} /></label>
-                  {/*
-                    Applications do not show the command: whoever added the shortcut already chose
-                    the app, and the value is an AUMID (`Microsoft.WindowsTerminal_…!App`) that
-                    tells nobody anything and only fills half a line. URL and folder stay editable
-                    — there the value is readable and is the only way to fix the target.
-                  */}
-                  {item.type !== 'folder' && item.commandType !== 'app' && item.commandType !== 'file' && (
-                    <label className="zs-field">
-                      <span>{item.commandType === 'url' ? 'URL' : 'Folder path'}</span>
-                      <input value={item.command} onChange={(event) => updateItem(index, { command: event.target.value })} />
-                    </label>
-                  )}
-                  {/*
-                    A file keeps the picker next to the field, because that is how the target got
-                    there and because a re-pick is the whole repair when the document has moved.
-                    The path stays typeable: correcting one folder name beats walking a dialog.
-                  */}
-                  {item.type !== 'folder' && item.commandType === 'file' && (
-                    <label className="zs-field is-with-action">
-                      <span>File path</span>
-                      <div className="zs-field-row">
-                        <input
-                          value={item.command}
-                          spellCheck={false}
-                          onChange={(event) => updateItem(index, { command: event.target.value })}
-                        />
-                        <button
-                          type="button"
-                          className="zs-btn"
-                          onClick={async () => {
-                            const picked = await window.electron?.selectFile?.({ mode: 'any' });
-                            if (picked) updateItem(index, { command: picked });
-                          }}
-                        ><FolderOpen size={13} /> Change</button>
-                      </div>
-                    </label>
-                  )}
-                  {item.type !== 'folder' && item.commandType === 'app' && isPathLikeCommand(item.command) && (
-                    <label className="zs-field is-with-action">
-                      <span>Target</span>
-                      <div className="zs-field-row">
-                        <input
-                          value={item.command}
-                          spellCheck={false}
-                          onChange={(event) => updateItem(index, { command: event.target.value })}
-                        />
-                        <button
-                          type="button"
-                          className="zs-btn"
-                          onClick={async () => {
-                            const picked = await window.electron?.selectFile?.();
-                            if (picked) updateItem(index, { command: picked });
-                          }}
-                        ><FolderOpen size={13} /> Change</button>
-                      </div>
-                    </label>
-                  )}
-                  {/*
-                    No launch mode for files, same reason folders have none: every one of the three
-                    describes what to do with a PROCESS, and a document has none — Windows picks the
-                    program, and `shell.openPath` is the only rung the launch ever gets.
-                  */}
-                  {item.type !== 'folder' && item.commandType !== 'folder' && item.commandType !== 'file' && (
-                    <div className="zs-launch-options">
-                      <div>
-                        <b>Launch mode</b>
-                        <small>
-                          {item.commandType === 'url' && (item.launchMode ?? 'normal') === 'reuse'
-                            ? 'Uses the existing default browser process when available.'
-                            : (item.launchMode ?? 'normal') === 'prewarm'
-                            ? 'Warms the Windows file cache for this app and reuses an existing process when supported.'
-                            : (item.launchMode ?? 'normal') === 'reuse'
-                              ? 'Prefers the existing IDE, app, or browser process.'
-                              : 'Uses the standard Windows launch behavior.'}
-                        </small>
-                      </div>
-                      <div className="zs-segmented" role="radiogroup" aria-label="Launch mode">
-                        {(item.commandType === 'url'
-                          ? ([['normal', 'Normal'], ['reuse', 'Reuse']] as const)
-                          : ([['normal', 'Normal'], ['reuse', 'Reuse'], ['prewarm', 'Warm']] as const)
-                        ).map(([value, label]) => (
+                <Collapse key="editor">
+                  <div className="zs-workspace-item-editor">
+                    <label className="zs-field"><span>Name</span><input value={item.label} onChange={(event) => updateItem(index, { label: event.target.value })} /></label>
+                    {/*
+                      Every shortcut chooses its icon. `div`, not `label`: the control is a
+                      button, and a label wrapping one steals the click on half its surface.
+                    */}
+                    {(() => {
+                      const summary = itemIconSummary(item);
+                      return (
+                        <div className="zs-field">
+                          <span>Icon</span>
                           <button
-                            key={value}
                             type="button"
-                            role="radio"
-                            aria-checked={(item.launchMode ?? 'normal') === value}
-                            className={(item.launchMode ?? 'normal') === value ? 'is-selected' : ''}
-                            onClick={() => updateItem(index, { launchMode: value })}
-                          >{label}</button>
-                        ))}
-                      </div>
-                      {(() => {
-                        const risk = launchModeRisk(item.commandType, item.launchMode ?? 'normal');
-                        if (!risk) return null;
-                        return (
-                          <p className="zs-launch-risk" role="note">
-                            <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
-                            <span>{risk}</span>
-                          </p>
-                        );
-                      })()}
-                    </div>
-                  )}
-                  {isIde && (
-                    <div className="zs-ide-options">
-                      <div className="zs-ide-options-head">
-                        <div><b>IDE integration</b><small>Recent projects and automated terminal commands.</small></div>
-                      </div>
-                      <div className="zs-ide-toggle-row">
-                        <div><b id={`ide-recents-${item.id}`}>Show recent folders</b><small>Open the IDE as a submenu containing its recent projects.</small></div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={Boolean(item.hasRecents)}
-                          aria-labelledby={`ide-recents-${item.id}`}
-                          className="zs-switch"
-                          onClick={() => updateItem(index, { hasRecents: !item.hasRecents })}
-                        ><i /></button>
-                      </div>
-                      <div className="zs-ide-toggle-row">
-                        <div><b id={`ide-terminal-${item.id}`}>Open terminal for recent folders</b><small>Starts a terminal in the selected project directory.</small></div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={Boolean(item.openTerminalForRecents)}
-                          aria-labelledby={`ide-terminal-${item.id}`}
-                          className="zs-switch"
-                          disabled={!item.hasRecents}
-                          onClick={() => updateItem(index, { openTerminalForRecents: !item.openTerminalForRecents })}
-                        ><i /></button>
-                      </div>
-                      <div className="zs-ide-commands">
-                        <div className="zs-ide-commands-head">
-                          <div><b>Automated commands</b><small>Executed in the selected recent project folder.</small></div>
-                          <button type="button" className="zs-btn" onClick={() => updateItem(index, { terminalCommands: [...(item.terminalCommands || []), ''] })}><Plus size={13} /> Add command</button>
+                            className="zs-icon-field-button"
+                            onClick={() => setIconEditItemId(item.id)}
+                            aria-label={`Change the icon for ${item.label}`}
+                          >
+                            <WorkspaceItemIcon item={item} />
+                            <div>
+                              <b>{summary.title}</b>
+                              <small>{summary.detail}</small>
+                            </div>
+                            <Pencil size={13} aria-hidden />
+                          </button>
                         </div>
-                        {(item.terminalCommands || []).map((command, commandIndex) => (
-                          <div className="zs-command-row" key={`${item.id}-command-${commandIndex}`}>
+                      );
+                    })()}
+                    {/*
+                      Applications do not show the command: whoever added the shortcut already chose
+                      the app, and the value is an AUMID (`Microsoft.WindowsTerminal_…!App`) that
+                      tells nobody anything and only fills half a line. URL and folder stay editable
+                      — there the value is readable and is the only way to fix the target.
+                    */}
+                    {item.type !== 'folder' && item.commandType === 'command' && (
+                      <>
+                        <label className="zs-field is-wide">
+                          <span>Command line</span>
+                          <input
+                            value={item.command}
+                            spellCheck={false}
+                            onChange={(event) => updateItem(index, { command: event.target.value })}
+                          />
+                        </label>
+                        <div className="zs-field is-with-action">
+                          <span>Run in</span>
+                          <div className="zs-field-row">
                             <input
-                              value={command}
-                              placeholder={commandIndex === 0 ? 'npm install' : 'npm run dev'}
-                              aria-label={`Automated command ${commandIndex + 1}`}
-                              onChange={(event) => updateItem(index, {
-                                terminalCommands: (item.terminalCommands || []).map((current, i) => i === commandIndex ? event.target.value : current),
-                              })}
+                              value={item.workingDirectory || ''}
+                              spellCheck={false}
+                              placeholder="Your user folder"
+                              aria-label="Working folder"
+                              onChange={(event) => updateItem(index, { workingDirectory: event.target.value || undefined })}
                             />
-                            <button type="button" aria-label={`Remove command ${commandIndex + 1}`} onClick={() => updateItem(index, {
-                              terminalCommands: (item.terminalCommands || []).filter((_, i) => i !== commandIndex),
-                            })}><X size={13} /></button>
+                            <button
+                              type="button"
+                              className="zs-btn"
+                              onClick={async () => {
+                                const picked = await window.electron?.selectFolder?.();
+                                if (picked) updateItem(index, { workingDirectory: picked });
+                              }}
+                            ><FolderOpen size={13} /> Browse</button>
                           </div>
-                        ))}
-                        {!item.terminalCommands?.length && <p className="zs-ide-empty">No automated commands configured.</p>}
+                        </div>
+                        <CommandRunOptions
+                          shell={item.commandShell ?? 'powershell'}
+                          windowMode={item.commandWindow ?? 'open'}
+                          onShell={(value) => updateItem(index, { commandShell: value })}
+                          onWindow={(value) => updateItem(index, { commandWindow: value })}
+                        />
+                      </>
+                    )}
+                    {item.type !== 'folder' && item.commandType !== 'app' && item.commandType !== 'file' && item.commandType !== 'command' && (
+                      <label className="zs-field">
+                        <span>{item.commandType === 'url' ? 'URL' : 'Folder path'}</span>
+                        <input value={item.command} onChange={(event) => updateItem(index, { command: event.target.value })} />
+                      </label>
+                    )}
+                    {/*
+                      A file keeps the picker next to the field, because that is how the target got
+                      there and because a re-pick is the whole repair when the document has moved.
+                      The path stays typeable: correcting one folder name beats walking a dialog.
+                    */}
+                    {item.type !== 'folder' && item.commandType === 'file' && (
+                      <label className="zs-field is-with-action">
+                        <span>File path</span>
+                        <div className="zs-field-row">
+                          <input
+                            value={item.command}
+                            spellCheck={false}
+                            onChange={(event) => updateItem(index, { command: event.target.value })}
+                          />
+                          <button
+                            type="button"
+                            className="zs-btn"
+                            onClick={async () => {
+                              const picked = await window.electron?.selectFile?.({ mode: 'any' });
+                              if (picked) updateItem(index, { command: picked });
+                            }}
+                          ><FolderOpen size={13} /> Change</button>
+                        </div>
+                      </label>
+                    )}
+                    {item.type !== 'folder' && item.commandType === 'app' && isPathLikeCommand(item.command) && (
+                      <label className="zs-field is-with-action">
+                        <span>Target</span>
+                        <div className="zs-field-row">
+                          <input
+                            value={item.command}
+                            spellCheck={false}
+                            onChange={(event) => updateItem(index, { command: event.target.value })}
+                          />
+                          <button
+                            type="button"
+                            className="zs-btn"
+                            onClick={async () => {
+                              const picked = await window.electron?.selectFile?.();
+                              if (picked) updateItem(index, { command: picked });
+                            }}
+                          ><FolderOpen size={13} /> Change</button>
+                        </div>
+                      </label>
+                    )}
+                    {/*
+                      No launch mode for files, same reason folders have none: every one of the three
+                      describes what to do with a PROCESS, and a document has none — Windows picks the
+                      program, and `shell.openPath` is the only rung the launch ever gets.
+                    */}
+                    {item.type !== 'folder' && item.commandType !== 'folder' && item.commandType !== 'file' && item.commandType !== 'command' && (
+                      <div className="zs-launch-options">
+                        <div>
+                          <b>Launch mode</b>
+                          <small>
+                            {item.commandType === 'url' && (item.launchMode ?? 'normal') === 'reuse'
+                              ? 'Uses the existing default browser process when available.'
+                              : (item.launchMode ?? 'normal') === 'prewarm'
+                              ? 'Warms the Windows file cache for this app and reuses an existing process when supported.'
+                              : (item.launchMode ?? 'normal') === 'reuse'
+                                ? 'Prefers the existing IDE, app, or browser process.'
+                                : 'Uses the standard Windows launch behavior.'}
+                          </small>
+                        </div>
+                        <div className="zs-segmented" role="radiogroup" aria-label="Launch mode">
+                          {(item.commandType === 'url'
+                            ? ([['normal', 'Normal'], ['reuse', 'Reuse']] as const)
+                            : ([['normal', 'Normal'], ['reuse', 'Reuse'], ['prewarm', 'Warm']] as const)
+                          ).map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              role="radio"
+                              aria-checked={(item.launchMode ?? 'normal') === value}
+                              className={(item.launchMode ?? 'normal') === value ? 'is-selected' : ''}
+                              onClick={() => updateItem(index, { launchMode: value })}
+                            >{label}</button>
+                          ))}
+                        </div>
+                        {(() => {
+                          const risk = launchModeRisk(item.commandType, item.launchMode ?? 'normal');
+                          if (!risk) return null;
+                          return (
+                            <p className="zs-launch-risk" role="note">
+                              <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
+                              <span>{risk}</span>
+                            </p>
+                          );
+                        })()}
                       </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                    {/*
+                      Main's answer arrives after the editor is already open, so this block appears
+                      on its own — the one reveal in the panel nobody asked for by clicking. It
+                      opens like the rest, and does not drag the form around while it does: what the
+                      user is looking at is the name field above it.
+                    */}
+                    <AnimatePresence initial={false}>
+                    {isIde && (
+                      <Collapse key="ide" reveal={false}>
+                        <div className="zs-ide-options">
+                          <div className="zs-ide-options-head">
+                            <div><b>IDE integration</b><small>Recent projects and automated terminal commands.</small></div>
+                          </div>
+                          <div className="zs-ide-toggle-row">
+                            <div><b id={`ide-recents-${item.id}`}>Show recent folders</b><small>Open the IDE as a submenu containing its recent projects.</small></div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={Boolean(item.hasRecents)}
+                              aria-labelledby={`ide-recents-${item.id}`}
+                              className="zs-switch"
+                              onClick={() => updateItem(index, { hasRecents: !item.hasRecents })}
+                            ><i /></button>
+                          </div>
+                          <div className="zs-ide-toggle-row">
+                            <div><b id={`ide-terminal-${item.id}`}>Open terminal for recent folders</b><small>Starts a terminal in the selected project directory.</small></div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={Boolean(item.openTerminalForRecents)}
+                              aria-labelledby={`ide-terminal-${item.id}`}
+                              className="zs-switch"
+                              disabled={!item.hasRecents}
+                              onClick={() => updateItem(index, { openTerminalForRecents: !item.openTerminalForRecents })}
+                            ><i /></button>
+                          </div>
+                          <div className="zs-ide-commands">
+                            <div className="zs-ide-commands-head">
+                              <div><b>Automated commands</b><small>Executed in the selected recent project folder.</small></div>
+                              <button type="button" className="zs-btn" onClick={() => updateItem(index, { terminalCommands: [...(item.terminalCommands || []), ''] })}><Plus size={13} /> Add command</button>
+                            </div>
+                            {(item.terminalCommands || []).map((command, commandIndex) => (
+                              <div className="zs-command-row" key={`${item.id}-command-${commandIndex}`}>
+                                <input
+                                  value={command}
+                                  placeholder={commandIndex === 0 ? 'npm install' : 'npm run dev'}
+                                  aria-label={`Automated command ${commandIndex + 1}`}
+                                  onChange={(event) => updateItem(index, {
+                                    terminalCommands: (item.terminalCommands || []).map((current, i) => i === commandIndex ? event.target.value : current),
+                                  })}
+                                />
+                                <button type="button" aria-label={`Remove command ${commandIndex + 1}`} onClick={() => updateItem(index, {
+                                  terminalCommands: (item.terminalCommands || []).filter((_, i) => i !== commandIndex),
+                                })}><X size={13} /></button>
+                              </div>
+                            ))}
+                            {!item.terminalCommands?.length && <p className="zs-ide-empty">No automated commands configured.</p>}
+                          </div>
+                        </div>
+                      </Collapse>
+                    )}
+                    </AnimatePresence>
+                  </div>
+                </Collapse>
               )}
+              </AnimatePresence>
             </div>
           );})}
           {!workspace.apps.length && (
@@ -3576,7 +4626,7 @@ function WorkspaceManager({
                 <span>Rovyl fills this workspace by itself. You can add more above at any time.</span>
               </div>
             ) : (
-              <div className="zs-manager-empty is-large"><SquareStack size={22} /><b>This workspace is empty</b><span>Add an application, URL, or folder above.</span></div>
+              <div className="zs-manager-empty is-large"><SquareStack size={22} /><b>This workspace is empty</b><span>Add an application, URL, folder, file, or command above.</span></div>
             )
           )}
         </div>
@@ -3623,6 +4673,94 @@ type ShortcutStatus =
  * Rovyl's own bindings are matched first and by name, because "already used by Cursor in Main" is
  * something the user can act on and "taken" is not.
  */
+/**
+ * Records the single key that leaves a folder.
+ *
+ * Deliberately NOT `ShortcutRecorder`. That one goes through main — pause the global shortcut,
+ * record at the OS level, probe whether Windows will hand the combination over — because a global
+ * accelerator has to be reserved system-wide. This key is only ever read by the wheel's own keydown
+ * handler while the wheel is open, so there is nothing to reserve and nobody to ask: capturing it
+ * in the panel is the whole job.
+ */
+function BackKeyRecorder({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (value: string) => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const current = normalizeBackKey(value);
+
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    if (!recording) return;
+    const handler = (e: KeyboardEvent) => {
+      /** A bare modifier is the user still reaching for the key, not the key. Keep listening. */
+      if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph'].includes(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      /** Escape leaves the recorder rather than being refused as a reserved key. */
+      if (e.key === 'Escape') {
+        setRecording(false);
+        setError(null);
+        return;
+      }
+      const reason = rejectBackKey(e.key, e.ctrlKey, e.altKey, e.metaKey);
+      if (reason) {
+        setError(reason);
+        /** Still recording: a refusal is an invitation to try another key, not a dead card. */
+        return;
+      }
+      setRecording(false);
+      setError(null);
+      onChangeRef.current(normalizeBackKey(e.key));
+    };
+    /** Capture, so the panel's own shortcuts and focused controls do not eat the keystroke first. */
+    window.addEventListener('keydown', handler, { capture: true });
+    return () => window.removeEventListener('keydown', handler, { capture: true });
+  }, [recording]);
+
+  return (
+    <div className="zs-shortcut">
+      <div className="zs-shortcut-keys">
+        {current ? <kbd>{current}</kbd> : <kbd>None</kbd>}
+      </div>
+      <button
+        type="button"
+        className={`zs-btn${recording ? '' : ' is-primary'}`}
+        onClick={() => {
+          setError(null);
+          setRecording((on) => !on);
+        }}
+      >
+        {recording ? 'Press any key… (Escape to stop)' : 'Record new key'}
+      </button>
+      {/* Both ways back to a sane state: the shipped default, or nothing at all. */}
+      <button
+        type="button"
+        className="zs-btn"
+        onClick={() => {
+          setRecording(false);
+          setError(null);
+          onChange(current === BACK_KEY_OFF ? DEFAULT_BACK_KEY : BACK_KEY_OFF);
+        }}
+      >
+        {current === BACK_KEY_OFF ? `Use ${DEFAULT_BACK_KEY}` : 'Remove key'}
+      </button>
+      {error && (
+        <p className="zs-shortcut-note is-warn" role="status">
+          <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
+          <span>{error}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ShortcutRecorder({
   value,
   onChange,

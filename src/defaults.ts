@@ -1,6 +1,7 @@
 import { AppItem, UIConfig, Workspace } from "./types";
 import { BACKDROP_DIM_SCALE } from "./utils/radialScrim";
-import { DEFAULT_TASKBAR_OVERLAY } from "./utils/taskbarOverlay";
+import { DEFAULT_SHORTCUT_DOCK, DEFAULT_STATUS_DOCK } from "./utils/screenDocks";
+import { DEFAULT_BACK_KEY } from "./constants/radialBackKey";
 
 export const DEFAULT_APPS: AppItem[] = [
   {
@@ -189,16 +190,6 @@ export const DEFAULT_WORKSPACES: Workspace[] = [
         description: "Live streaming",
       },
       {
-        id: "stream-3",
-        type: "app",
-        label: "Prime Video",
-        iconName: "MonitorPlay",
-        iconSource: "lucide",
-        command: "https://www.primevideo.com/",
-        commandType: "url",
-        description: "Amazon Streaming",
-      },
-      {
         id: "stream-4",
         type: "app",
         label: "Netflix",
@@ -210,6 +201,103 @@ export const DEFAULT_WORKSPACES: Workspace[] = [
       },
     ],
     color: "#EF4444", // Red
+  },
+  /**
+   * The wheel Rovyl is shown with: AI tools, editors and design, on 3.
+   * Every command here is a Start Menu AppID rather than a path, because that is what Windows
+   * hands back for these installers and what `normalizeAumidIdeCommands` already knows how to
+   * turn into an executable. An entry whose app is not installed simply fails to launch — the
+   * user deletes it, the same as any other item on the wheel.
+   */
+  {
+    id: "workspace-3",
+    name: "Build",
+    hotkey: 3,
+    enabled: true,
+    pickerIconName: "Stars",
+    apps: [
+      {
+        id: "build-1",
+        type: "app",
+        label: "Claude",
+        iconName: "Bot",
+        iconSource: "native",
+        command: "Claude_pzs8sxrjxfjjc!Claude",
+        commandType: "app",
+        description: "AI assistant",
+      },
+      {
+        id: "build-2",
+        type: "app",
+        label: "ChatGPT",
+        iconName: "MessageCircle",
+        iconSource: "lucide",
+        command: "https://chatgpt.com/",
+        commandType: "url",
+        description: "AI chat",
+      },
+      {
+        id: "build-3",
+        type: "app",
+        label: "Gemini",
+        iconName: "Sparkles",
+        iconSource: "lucide",
+        command: "https://gemini.google.com/app",
+        commandType: "url",
+        description: "AI chat",
+      },
+      {
+        id: "build-4",
+        type: "app",
+        label: "Cursor",
+        iconName: "Code2",
+        iconSource: "native",
+        command: "Anysphere.Cursor",
+        commandType: "app",
+        description: "AI code editor",
+      },
+      {
+        id: "build-5",
+        type: "app",
+        label: "Antigravity",
+        iconName: "Binary",
+        iconSource: "native",
+        command: "electron.app.Antigravity",
+        commandType: "app",
+        description: "AI IDE",
+      },
+      {
+        id: "build-6",
+        type: "app",
+        label: "Visual Studio Code",
+        iconName: "FileCode",
+        iconSource: "native",
+        command: "Microsoft.VisualStudioCode",
+        commandType: "app",
+        description: "Code editor",
+      },
+      {
+        id: "build-7",
+        type: "app",
+        label: "Comet",
+        iconName: "Compass",
+        iconSource: "native",
+        command: "Comet.XC3C7ZDCXKJMBTAJSSDCPHARG4",
+        commandType: "app",
+        description: "AI browser",
+      },
+      {
+        id: "build-8",
+        type: "app",
+        label: "Figma",
+        iconName: "Figma",
+        iconSource: "native",
+        command: "com.squirrel.Figma.Figma",
+        commandType: "app",
+        description: "Design",
+      },
+    ],
+    color: "#FFFFFF",
   },
 ];
 
@@ -227,18 +315,26 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
    */
   radialMonitor: 'primary',
   /**
-   * Not 1 any more, and not a weaker default either: 0.6 on the scale that reaches a black screen
-   * paints the same alpha (0.5) that 1 painted on the scale that topped out at half. The slider
-   * simply has somewhere to go above the shipped look now. See `radialScrimAlphas`.
+   * The centre of the screen, which is where every wheel has opened until now. Under the pointer is
+   * the shorter gesture, but it also moves the wheel somewhere different on every open — so it is
+   * offered rather than imposed, exactly like the monitor above.
    */
-  backdropOpacity: 0.6,
+  radialPlacement: 'center',
+  /**
+   * Deliberately deep: at 0.9 the desktop is a dark suggestion behind the wheel (~0.85 alpha under
+   * it, still falling off at the edge rather than a flat sheet), so the wheel is the only thing on
+   * screen worth looking at. Note this is past `SCRIM_FLATTEN_FROM`, so the radial opens monitor-
+   * wide by default instead of as a box around the wheel. See `radialScrimAlphas`.
+   */
+  backdropOpacity: 0.9,
   backdropDimScale: BACKDROP_DIM_SCALE,
   /**
-   * Off, and for the same reason `radialInstantActivate` is off: this one reaches outside the app.
-   * Everything else here changes how Rovyl looks; this changes the user's desktop, and a taskbar
-   * that started disappearing because someone updated is not a setting, it is a fault report.
+   * Both off. They paint things beside the wheel that were never there, and the shortcut dock is
+   * empty until somebody fills it — a strip of nothing appearing in the corner because a person
+   * updated is not a feature arriving, it is a fault report.
    */
-  taskbarOverlay: DEFAULT_TASKBAR_OVERLAY,
+  statusDock: DEFAULT_STATUS_DOCK,
+  shortcutDock: DEFAULT_SHORTCUT_DOCK,
   menuBackgroundStyle: "circle",
   appSpacing: 10, // Default spacing between apps
   activationThreshold: 60,
@@ -250,9 +346,16 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   },
   showLabels: true,
   alwaysShowAppLabels: false,
+  showWorkspacePill: true,
   showBattery: false,
   showWeather: false,
   clockPosition: "top-center",
+  /**
+   * Off: it paints something over the desktop that was never there, and it costs the overlay its
+   * cheap box (see `showSettingsCorner`). Whoever wants a visible way into Settings turns it on.
+   */
+  showSettingsCorner: false,
+  settingsCorner: "top-right",
   gameMode: {
     enabled: false,
     mode: "list",
@@ -275,8 +378,23 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   radialInstantActivate: 'off',
   radialInstantDwellMs: 400,
   radialInstantSensitivity: 'medium',
+  /**
+   * Off, like every other setting here that changes what an existing gesture DOES. Typing on an
+   * open wheel filters it; turning this on makes nine of those keys launch instead, and nobody
+   * should meet that by updating.
+   */
+  radialNumberLaunch: false,
+  /** On, so that turning the feature on is enough to see where the numbers are. */
+  radialNumberLabels: true,
+  /**
+   * A key is named up front so that turning `radialNumberLaunch` on is enough to have one — the
+   * same reason `radialNumberLabels` ships true. It stays inert until then, and even once live it
+   * only answers inside a folder with the filter empty, so the single thing it costs is starting a
+   * search with this letter while already one level down.
+   */
+  radialBackKey: DEFAULT_BACK_KEY,
+  enableKeyboardTrigger: true,
   enableMouseTrigger: true,
-  middleClickOpensMenu: true,
   mouseTriggerMode: 'click',
   mouseTriggerButton: 'middle',
   shortcutTriggerMode: 'toggle',
