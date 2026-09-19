@@ -2480,6 +2480,8 @@ let radialTriggerListener = null;
 let requestBlockerRespawn = null;
 /** Set by the shortcut owner: opens the wheel from the helper's HOTKEY_PRESSED (scope bridge). */
 let openRadialFromShortcutRef = null;
+/** Re-sends the current hotkey to a (fresh) helper; set once shortcut state exists. */
+let refreshHelperHotkey = null;
 
 /** Drag slop: below this the press was a click, not an aim. */
 const TRIGGER_PASSTHROUGH_SLOP_PX = 6;
@@ -2747,6 +2749,8 @@ function ensureRadialMouseBlocker() {
     /** A line on its own: "TRIGGER_READY" also contains READY and does not announce the startup. */
     if (!/^READY\s*$/m.test(text)) return;
     radialMouseBlockerReady = true;
+    /** The hotkey watch dies with the helper process — re-arm it on every fresh one. */
+    if (isWaylandNative && typeof refreshHelperHotkey === "function") refreshHelperHotkey();
     if (pendingRadialMouseBlockCommand) {
       const command = pendingRadialMouseBlockCommand;
       pendingRadialMouseBlockCommand = null;
@@ -3947,6 +3951,9 @@ app.whenReady().then(async () => {
     }
     if (typeof ui.enableKeyboardTrigger === "boolean") {
       currentSettings.enableKeyboardTrigger = ui.enableKeyboardTrigger;
+    }
+    if (typeof ui.middleClickOpensMenu === "boolean") {
+      currentSettings.middleClickOpensMenu = ui.middleClickOpensMenu;
     }
     if (typeof ui.enableMouseTrigger === "boolean") {
       currentSettings.enableMouseTrigger = ui.enableMouseTrigger;
@@ -5510,7 +5517,7 @@ app.whenReady().then(async () => {
           /** Wayland: globalShortcut has no compositor protocol to reach — the helper's
            * passive keyboard watch is the one that actually fires. Keep the Electron
            * registration for X11 sessions; on Wayland it just returns true and does nothing. */
-          if (isWaylandNative && radialMouseBlocker && radialMouseBlockerReady) {
+          if (isWaylandNative && currentSettings.enableKeyboardTrigger !== false) {
             writeRadialMouseBlocker(`HOTKEY ${acceleratorToEvdevCode(shortcut)} ${acceleratorToModMask(shortcut)}`);
           }
 
@@ -5638,6 +5645,13 @@ app.whenReady().then(async () => {
 
   // Register initial shortcut
   registerGlobalShortcut();
+  /** Helper restarts re-read the current shortcut through this. */
+  refreshHelperHotkey = () => {
+    if (!isWaylandNative) return;
+    const disabled = currentSettings.enableKeyboardTrigger === false;
+    const shortcut = disabled ? "" : (currentSettings.globalShortcut || "Alt+Z");
+    writeRadialMouseBlocker(`HOTKEY ${disabled ? 0 : acceleratorToEvdevCode(shortcut)} ${disabled ? 0 : acceleratorToModMask(shortcut)}`);
+  };
 
   refreshShortcutsFromFullConfig = () => {
     registerGlobalShortcut();
