@@ -1315,9 +1315,11 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
                 if (evs[k].value != 0) ev_mod_mask |= bit;
                 else ev_mod_mask &= ~bit;
               } else if (hotkey_code && evs[k].code == (unsigned)hotkey_code) {
-                /** Press = fire; release is left alone so the app sees a normal key pair. */
+                /** Press = fire; release is left alone so the app sees a normal key pair.
+                 * Subset match (required mods held, extras tolerated): exact equality breaks
+                 * the moment any untracked/stale modifier bit is set in a live session. */
                 if (evs[k].value != 0) {
-                  if (ev_mod_mask == hotkey_mod_mask) emit("HOTKEY_PRESSED");
+                  if ((ev_mod_mask & hotkey_mod_mask) == hotkey_mod_mask) emit("HOTKEY_PRESSED");
                 }
               }
             }

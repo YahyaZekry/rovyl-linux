@@ -2721,8 +2721,14 @@ function ensureRadialMouseBlocker() {
           diagLog(`[RadialBlocker] record mouse: ${e.message}`);
         }
       } else if (line === "HOTKEY_PRESSED") {
+        /**
+         * Module scope: `currentSettings` lives in the whenReady closure and is NOT visible
+         * here (that ReferenceError ate every hotkey press once). The shortcut owner's ref
+         * runs on the closure side, where the settings are.
+         */
         try {
-          openRadialFromShortcutRef?.(currentSettings.globalShortcut || "Alt+Z");
+          diagLog("[RadialBlocker] HOTKEY_PRESSED received from helper");
+          openRadialFromShortcutRef?.("hotkey");
         } catch (e) {
           diagLog(`[RadialBlocker] hotkey: ${e.message}`);
         }
@@ -5534,6 +5540,7 @@ app.whenReady().then(async () => {
            * passive keyboard watch is the one that actually fires. Keep the Electron
            * registration for X11 sessions; on Wayland it just returns true and does nothing. */
           if (isWaylandNative && currentSettings.enableKeyboardTrigger !== false) {
+            diagLog(`[Shortcut] arming helper hotkey watch (registration): ${shortcut}`);
             writeRadialMouseBlocker(`HOTKEY ${acceleratorToEvdevCode(shortcut)} ${acceleratorToModMask(shortcut)}`);
           }
 
@@ -5664,6 +5671,7 @@ app.whenReady().then(async () => {
   /** Helper restarts re-read the current shortcut through this. */
   refreshHelperHotkey = () => {
     if (!isWaylandNative) return;
+    diagLog("[Shortcut] arming helper hotkey watch");
     const disabled = currentSettings.enableKeyboardTrigger === false;
     const shortcut = disabled ? "" : (currentSettings.globalShortcut || "Alt+Z");
     writeRadialMouseBlocker(`HOTKEY ${disabled ? 0 : acceleratorToEvdevCode(shortcut)} ${disabled ? 0 : acceleratorToModMask(shortcut)}`);
