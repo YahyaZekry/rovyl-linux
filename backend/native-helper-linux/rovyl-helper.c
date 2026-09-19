@@ -176,6 +176,11 @@ static int shortcut_active;
 static int trigger_held, click_press_armed, click_injected_button;
 static int down_x, down_y;
 static long long down_at;
+/* Click mode: a held-back quick click, cancelled by CLICK_CONSUMED when the menu absorbs it. */
+#define PASSTHROUGH_DELAY_MS 250
+static int x11_pending_passthrough;
+static int x11_pending_button;
+static long long x11_pending_at;
 
 /*
  * Synthetic events we are expecting: the passive grabs fire on our own XTest presses too
@@ -309,7 +314,9 @@ static void handle_button_release(int button, int x, int y) {
         emit("TRIGGER_HOLD");
       } else {
         emit("TRIGGER_UP");
-        passthrough_click(button);
+        x11_pending_passthrough = 1;
+        x11_pending_button = button;
+        x11_pending_at = now_ms() + PASSTHROUGH_DELAY_MS;
       }
     }
     XAllowEvents(dpy, AsyncPointer, CurrentTime);
@@ -402,6 +409,8 @@ static void apply_command(char *line) {
   } else if (strcmp(parts[0], "UNBLOCK") == 0) {
     blocking = 0;
     reinstall_grabs();
+  } else if (strcmp(parts[0], "CLICK_CONSUMED") == 0) {
+    x11_pending_passthrough = 0; /* main opened the menu: the click is absorbed by the wheel */
   } else if (strcmp(parts[0], "TRIGGER") == 0) {
     if (click_injected_button != 0) {
       inject_button_up(click_injected_button);
@@ -474,6 +483,7 @@ static void run_mouse_blocker(void) {
     int maxfd = xfd > 0 ? xfd : 0;
     /* 15 ms tick while a click-mode press is held, otherwise sleep on the sockets. */
     struct timeval tv = {0, 15000}, *tvp = trigger_held && !trigger_hold_mode ? &tv : NULL;
+    if (!tvp && x11_pending_passthrough) tvp = &tv;
     int ready = select(maxfd + 1, &fds, NULL, NULL, tvp);
     if (ready < 0 && errno != EINTR) break;
     if (ready > 0 && FD_ISSET(0, &fds)) {
@@ -508,6 +518,12 @@ static void run_mouse_blocker(void) {
           XAllowEvents(dpy, AsyncPointer, CurrentTime);
         }
       }
+      XFlush(dpy);
+    }
+    if (x11_pending_passthrough && now_ms() >= x11_pending_at) {
+      x11_pending_passthrough = 0;
+      XTestFakeButtonEvent(dpy, x11_pending_button, True, CurrentTime);
+      XTestFakeButtonEvent(dpy, x11_pending_button, False, CurrentTime);
       XFlush(dpy);
     }
     poll_click_hold();
