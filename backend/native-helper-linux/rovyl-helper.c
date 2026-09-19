@@ -314,9 +314,7 @@ static void handle_button_release(int button, int x, int y) {
         emit("TRIGGER_HOLD");
       } else {
         emit("TRIGGER_UP");
-        x11_pending_passthrough = 1;
-        x11_pending_button = button;
-        x11_pending_at = now_ms() + PASSTHROUGH_DELAY_MS;
+        passthrough_click(button);
       }
     }
     XAllowEvents(dpy, AsyncPointer, CurrentTime);
@@ -1068,10 +1066,10 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
         emit("TRIGGER_HOLD");
       } else {
         emit("TRIGGER_UP");
-        ev_pending_passthrough = 1;
-        ev_pending_src = src;
-        ev_pending_btn = code;
-        ev_pending_at = evdev_now_ms() + PASSTHROUGH_DELAY_MS;
+        /* inject immediately: the app gets its native middle click, and main may still open
+         * the menu — the menu does not eat the action (Windows-parity click mode) */
+        inject_button(src, code, 1);
+        inject_button(src, code, 0);
       }
       return;
     }

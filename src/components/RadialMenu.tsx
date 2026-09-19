@@ -3137,13 +3137,6 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
 
   const handleAppClick = React.useCallback((app: AppItem) => {
     /**
-     * Click mode holds the trigger's quick click back 250 ms and main cancels it when the menu
-     * opens — but the cancel can lose the race, and the late click then lands ON the wheel. A
-     * click inside the first 450 ms of the wheel's life is that held-back click arriving, never
-     * a human choice: the human has not seen the wheel yet.
-     */
-    if (Date.now() - openingTimeRef.current < 450) return;
-    /**
      * This is the path for a real click on an icon: the tile stops propagation, so the window's
      * `handleMouseUp` — which has this same guard — never gets to see it.
      *
@@ -3153,9 +3146,6 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
      * marks the quarantine AFTERWARDS — the guard never blocks its own launch, only a following
      * human click.
      */
-    if (Date.now() < quarantineUntilRef.current) return;
-    /** Same window-of-life guard as the tile: the held-back trigger click, landing late. */
-    if (Date.now() - openingTimeRef.current < 450) return;
     /** Echo running: the target is already decided and the wheel on its way out — nothing under it opens anything. */
     if (launchEchoTimerRef.current !== null) return;
     /**
@@ -3594,6 +3584,10 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
           {/* A single scrim (no radial mask — avoids a halo / “glow” around the radial) */}
           <div
             className={`zn-radial-scrim fixed inset-0 z-[2]${echoActive ? ' zn-launch-scrim' : ''}`}
+            onClick={() => {
+              /** Click on the empty wheel area = dismiss, same as clicking outside the window. */
+              if (isOpen && !isExiting && !echoActive) onCloseNow(null);
+            }}
             style={{
               pointerEvents: isOpen && !isExiting && !echoActive ? 'auto' : 'none',
               background: overlayDim,
