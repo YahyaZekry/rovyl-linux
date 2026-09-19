@@ -2401,6 +2401,20 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       gestureConsumedRef.current = true;
       const { folderStack, apps, currentLevelApps, onClose, config } = stateRef.current;
 
+      /**
+       * A click on the empty area (the scrim — tiles stop their own events, so anything that
+       * reaches this handler from outside the hub is not on an icon) is a DISMISS, never a
+       * confirm: in angle mode the aim lights a slice from anywhere on screen, and confirming
+       * here turned every "click away to close" into an accidental launch.
+       */
+      if (
+        e.target instanceof Element &&
+        e.target.classList.contains('zn-radial-scrim')
+      ) {
+        onClose(null);
+        return;
+      }
+
       /** The target is where the aim is NOW, not what the last render managed to record. */
       const point = trackAimPoint({ x: e.clientX, y: e.clientY });
       const aim = resolveAimAtPoint(point);
@@ -3584,10 +3598,6 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
           {/* A single scrim (no radial mask — avoids a halo / “glow” around the radial) */}
           <div
             className={`zn-radial-scrim fixed inset-0 z-[2]${echoActive ? ' zn-launch-scrim' : ''}`}
-            onClick={() => {
-              /** Click on the empty wheel area = dismiss, same as clicking outside the window. */
-              if (isOpen && !isExiting && !echoActive) onCloseNow(null);
-            }}
             style={{
               pointerEvents: isOpen && !isExiting && !echoActive ? 'auto' : 'none',
               background: overlayDim,

@@ -714,6 +714,7 @@ struct ev_source {
 static struct ev_source sources[MAX_DEVICES];
 static int source_count;
 static int kbd_fds[MAX_DEVICES];
+static char kbd_nodes[MAX_DEVICES][32];
 static int kbd_count;
 
 /* Capability probe: a mouse has EV_REL axes and at least BTN_LEFT. */
@@ -911,7 +912,15 @@ static void scan_input_devices(const char *name_filter) {
       source_count++;
     } else if (is_keyboard_device(fd)) {
       if (kbd_count >= MAX_DEVICES) { close(fd); continue; }
-      /* observers, not grabbers: keyboards keep working normally, we just watch modifiers */
+      /* observers, not grabbers: keyboards keep working normally, we just watch modifiers.
+       * Dedup by devnode: the 1 s rescan re-walks /dev/input and would otherwise re-open the
+       * same keyboards every second until the array fills and new keyboards are refused. */
+      int kbd_held = 0;
+      for (int k = 0; k < kbd_count; k++) {
+        if (strcmp(kbd_nodes[k], de->d_name) == 0) { kbd_held = 1; break; }
+      }
+      if (kbd_held) { close(fd); continue; }
+      snprintf(kbd_nodes[kbd_count], sizeof(kbd_nodes[kbd_count]), "%s", de->d_name);
       kbd_fds[kbd_count++] = fd;
     } else {
       close(fd);
@@ -931,7 +940,9 @@ static void rescan_input_devices(const char *name_filter) {
     struct pollfd p = {kbd_fds[i], POLLERR | POLLHUP, 0};
     if (poll(&p, 1, 0) > 0 && (p.revents & (POLLERR | POLLHUP))) {
       close(kbd_fds[i]);
-      kbd_fds[i] = kbd_fds[--kbd_count];
+      strcpy(kbd_nodes[i], kbd_nodes[kbd_count - 1]);
+      kbd_fds[i] = kbd_fds[kbd_count - 1];
+      kbd_count--;
     }
   }
   scan_input_devices(name_filter);
@@ -1314,7 +1325,9 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
         }
         if (got == 0 || (got < 0 && errno != EAGAIN)) {
           close(kbd_fds[i]);
-          kbd_fds[i] = kbd_fds[--kbd_count];
+          strcpy(kbd_nodes[i], kbd_nodes[kbd_count - 1]);
+          kbd_fds[i] = kbd_fds[kbd_count - 1];
+          kbd_count--;
         }
       }
     }

@@ -26,17 +26,20 @@ TMP="$(mktemp -d)"
 trap 'kill $(jobs -pr) 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
 gcc -O2 -include fcntl.h -include sys/time.h -o "$TMP/vmouse" "$SCRIPTS/vmouse.c"
+gcc -O2 -include fcntl.h -include sys/time.h -o "$TMP/vkbd" "$SCRIPTS/vkbd.c"
 gcc -O2 -o "$TMP/evlisten" "$SCRIPTS/evlisten.c"
 
 # fifo1: control commands to the helper; fifo2: gesture commands to the virtual mouse
-FIFO1="$TMP/cmds" FIFO2="$TMP/gest"
-mkfifo "$FIFO1" "$FIFO2"
+FIFO1="$TMP/cmds" FIFO2="$TMP/gest" FIFO3="$TMP/keys"
+mkfifo "$FIFO1" "$FIFO2" "$FIFO3"
 
 "$HELPER" mouse-blocker-evdev $$ e2e-test-mouse < "$FIFO1" > "$TMP/helper.out" 2> "$TMP/helper.err" &
 sleep 0.3
 "$TMP/vmouse" < "$FIFO2" > "$TMP/vm.out" 2>&1 &
 sleep 0.2
-exec 3>"$FIFO1" 4>"$FIFO2"
+"$TMP/vkbd" < "$FIFO3" > "$TMP/vk.out" 2>&1 &
+sleep 0.2
+exec 3>"$FIFO1" 4>"$FIFO2" 5>"$FIFO3"
 
 # wait for the helper's rescan to pick the device up and create the forwarded twin
 FWD=""
@@ -95,6 +98,16 @@ echo "p 2" >&4; sleep 0.1; echo "m 1100 0" >&4; sleep 0.1; echo "r 2" >&4; sleep
 C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH1=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
 [ "$TH1" -gt "$TH0" ] || fail "C: no TRIGGER_HOLD"
 [ "$C1" -gt "$C0" ] || fail "C: injection not delivered"
+
+# F: global hotkey via passive keyboard watch -> HOTKEY_PRESSED
+HK0=$(grep -c "HOTKEY_PRESSED" "$TMP/helper.out" || true)
+echo "HOTKEY 44 2" >&3; sleep 0.6   # Alt+Z = KEY_Z(44) + MOD_ALT(2)
+echo "d 56" >&5; sleep 0.15         # KEY_LEFTALT down
+echo "d 44" >&5; sleep 0.15         # KEY_Z down -> should fire
+echo "u 44" >&5; sleep 0.15
+echo "u 56" >&5; sleep 0.5
+HK1=$(grep -c "HOTKEY_PRESSED" "$TMP/helper.out" || true)
+[ "$HK1" -gt "$HK0" ] || fail "F: hotkey Alt+Z did not fire HOTKEY_PRESSED"
 
 # D: BLOCK + POS outside allowed -> swallowed (BTN_LEFT count unchanged)
 echo "BLOCK 100 100 500 400 0 0 1920 1080" >&3; sleep 0.4

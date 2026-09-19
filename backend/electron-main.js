@@ -207,9 +207,22 @@ function acceleratorToEvdevCode(accelerator) {
     .pop()
     .trim()
     .toUpperCase();
-  if (/^[A-Z]$/.test(key)) return 30 + (key.charCodeAt(0) - 65);
-  if (/^[0-9]$/.test(key)) return 11 - (key.charCodeAt(0) - 48) + (key.charCodeAt(0) - 48); // KEY_0=11
-  if (/^F([1-9]|1[0-2])$/.test(key)) return 59 + (parseInt(key.slice(1), 10) - 1);
+  /**
+   * Evdev key codes follow the QWERTY keyboard scan order, NOT ASCII: A..L are 30..38,
+   * Z..M are 44..50, Q..P are 16..25, digits 1..0 are 2..11, F1..F10 are 59..68.
+   * A plain charCode formula watches the wrong key for every letter but A.
+   */
+  const LETTERS = {
+    Q: 16, W: 17, E: 18, R: 19, T: 20, Y: 21, U: 22, I: 23, O: 24, P: 25,
+    A: 30, S: 31, D: 32, F: 33, G: 34, H: 35, J: 36, K: 37, L: 38,
+    Z: 44, X: 45, C: 46, V: 47, B: 48, N: 49, M: 50,
+  };
+  if (LETTERS[key] !== undefined) return LETTERS[key];
+  if (/^[0-9]$/.test(key)) return key === "0" ? 11 : 1 + parseInt(key, 10);
+  if (/^F([1-9]|1[0-2])$/.test(key)) {
+    const n = parseInt(key.slice(1), 10);
+    return n <= 10 ? 58 + n : n === 11 ? 87 : 88;
+  }
   return 0;
 }
 function acceleratorToModMask(accelerator) {
