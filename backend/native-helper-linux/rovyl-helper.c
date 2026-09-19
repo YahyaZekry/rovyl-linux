@@ -176,6 +176,11 @@ static int shortcut_active;
 static int trigger_held, click_press_armed, click_injected_button;
 static int down_x, down_y;
 static long long down_at;
+/* Click mode: a held-back quick click, cancelled by CLICK_CONSUMED when the menu absorbs it. */
+#define PASSTHROUGH_DELAY_MS 250
+static int x11_pending_passthrough;
+static int x11_pending_button;
+static long long x11_pending_at;
 
 /*
  * Synthetic events we are expecting: the passive grabs fire on our own XTest presses too
@@ -402,6 +407,8 @@ static void apply_command(char *line) {
   } else if (strcmp(parts[0], "UNBLOCK") == 0) {
     blocking = 0;
     reinstall_grabs();
+  } else if (strcmp(parts[0], "CLICK_CONSUMED") == 0) {
+    x11_pending_passthrough = 0; /* main opened the menu: the click is absorbed by the wheel */
   } else if (strcmp(parts[0], "TRIGGER") == 0) {
     if (click_injected_button != 0) {
       inject_button_up(click_injected_button);
@@ -474,6 +481,7 @@ static void run_mouse_blocker(void) {
     int maxfd = xfd > 0 ? xfd : 0;
     /* 15 ms tick while a click-mode press is held, otherwise sleep on the sockets. */
     struct timeval tv = {0, 15000}, *tvp = trigger_held && !trigger_hold_mode ? &tv : NULL;
+    if (!tvp && x11_pending_passthrough) tvp = &tv;
     int ready = select(maxfd + 1, &fds, NULL, NULL, tvp);
     if (ready < 0 && errno != EINTR) break;
     if (ready > 0 && FD_ISSET(0, &fds)) {
@@ -508,6 +516,12 @@ static void run_mouse_blocker(void) {
           XAllowEvents(dpy, AsyncPointer, CurrentTime);
         }
       }
+      XFlush(dpy);
+    }
+    if (x11_pending_passthrough && now_ms() >= x11_pending_at) {
+      x11_pending_passthrough = 0;
+      XTestFakeButtonEvent(dpy, x11_pending_button, True, CurrentTime);
+      XTestFakeButtonEvent(dpy, x11_pending_button, False, CurrentTime);
       XFlush(dpy);
     }
     poll_click_hold();
@@ -700,6 +714,7 @@ struct ev_source {
 static struct ev_source sources[MAX_DEVICES];
 static int source_count;
 static int kbd_fds[MAX_DEVICES];
+static char kbd_nodes[MAX_DEVICES][32];
 static int kbd_count;
 
 /* Capability probe: a mouse has EV_REL axes and at least BTN_LEFT. */
@@ -897,7 +912,15 @@ static void scan_input_devices(const char *name_filter) {
       source_count++;
     } else if (is_keyboard_device(fd)) {
       if (kbd_count >= MAX_DEVICES) { close(fd); continue; }
-      /* observers, not grabbers: keyboards keep working normally, we just watch modifiers */
+      /* observers, not grabbers: keyboards keep working normally, we just watch modifiers.
+       * Dedup by devnode: the 1 s rescan re-walks /dev/input and would otherwise re-open the
+       * same keyboards every second until the array fills and new keyboards are refused. */
+      int kbd_held = 0;
+      for (int k = 0; k < kbd_count; k++) {
+        if (strcmp(kbd_nodes[k], de->d_name) == 0) { kbd_held = 1; break; }
+      }
+      if (kbd_held) { close(fd); continue; }
+      snprintf(kbd_nodes[kbd_count], sizeof(kbd_nodes[kbd_count]), "%s", de->d_name);
       kbd_fds[kbd_count++] = fd;
     } else {
       close(fd);
@@ -917,7 +940,9 @@ static void rescan_input_devices(const char *name_filter) {
     struct pollfd p = {kbd_fds[i], POLLERR | POLLHUP, 0};
     if (poll(&p, 1, 0) > 0 && (p.revents & (POLLERR | POLLHUP))) {
       close(kbd_fds[i]);
-      kbd_fds[i] = kbd_fds[--kbd_count];
+      strcpy(kbd_nodes[i], kbd_nodes[kbd_count - 1]);
+      kbd_fds[i] = kbd_fds[kbd_count - 1];
+      kbd_count--;
     }
   }
   scan_input_devices(name_filter);
@@ -937,6 +962,24 @@ static int ev_click_press_armed, ev_click_injected;
 static long long ev_down_at;
 static long long ev_gesture_dx, ev_gesture_dy;
 
+/*
+ * Approximate absolute cursor position, tracked from the renderer's `POS` anchor plus every REL
+ * delta we forward. libinput acceleration makes this drift from the true position, so it is only
+ * used for coarse answers (which monitor the pointer is on) — never for exact placement.
+ */
+static long long cur_x = 0, cur_y = 0;
+
+/*
+ * Click mode hands a quick press back AFTER main has decided: a menu opening absorbs the click
+ * (main cancels it with CLICK_CONSUMED), a refused one lands in the app 250 ms later. Injecting
+ * at release races the wheel's own reveal and fired both the app action AND the menu.
+ */
+#define PASSTHROUGH_DELAY_MS 250
+static int ev_pending_passthrough;
+static struct ev_source *ev_pending_src;
+static unsigned int ev_pending_btn;
+static long long ev_pending_at;
+
 static volatile int ev_blocking;
 /*
  * The block must never outlive the session that asked for it: main proves the wheel/panel is
@@ -944,7 +987,7 @@ static volatile int ev_blocking;
  * blocking means the other side is gone (crashed renderer, lost race, anything) — release the
  * block ourselves. Worst case for the user is a few seconds of dead clicks, never a forced quit.
  */
-#define BLOCK_WATCHDOG_MS 5000
+#define BLOCK_WATCHDOG_MS 2000
 static long long ev_last_stdin_ms;
 static int ev_block_l, ev_block_t, ev_block_r, ev_block_b;
 static int ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b;
@@ -953,6 +996,14 @@ static int ev_last_x = -1, ev_last_y = -1;
 static volatile int ev_record_mode;
 static int ev_shortcut_vk, ev_shortcut_mod_mask, ev_shortcut_active;
 static int ev_mod_mask;
+/*
+ * Global hotkey via passive keyboard observation: keyboards are opened read-only (never grabbed),
+ * so the compositor keeps receiving every key — the app behaves natively — and we just watch for
+ * the configured combo. This is how the global shortcut works on Wayland, where Electron's
+ * globalShortcut has no protocol to reach.
+ */
+static int hotkey_code;                /* evdev key code, 0 = none */
+static int hotkey_mod_mask;
 
 static int ev_point_in(int x, int y, int l, int t, int r, int b) {
   return x >= l && x < r && y >= t && y < b;
@@ -994,6 +1045,7 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
 
   if (ev_trigger_vk && vk == ev_trigger_vk) {
     if (press && !ev_trigger_held) {
+      ev_pending_passthrough = 0; /* a new gesture supersedes a held-back click */
       ev_trigger_held = 1;
       ev_trigger_src = src;
       ev_down_at = evdev_now_ms();
@@ -1025,6 +1077,8 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
         emit("TRIGGER_HOLD");
       } else {
         emit("TRIGGER_UP");
+        /* inject immediately: the app gets its native middle click, and main may still open
+         * the menu — the menu does not eat the action (Windows-parity click mode) */
         inject_button(src, code, 1);
         inject_button(src, code, 0);
       }
@@ -1049,6 +1103,8 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
 }
 
 static void ev_handle_rel(struct ev_source *src, unsigned int code, int value) {
+  if (code == REL_X) cur_x += value;
+  else if (code == REL_Y) cur_y += value;
   if (ev_trigger_held) {
     if (code == REL_X) ev_gesture_dx += value;
     else if (code == REL_Y) ev_gesture_dy += value;
@@ -1098,9 +1154,24 @@ static void ev_apply_command(char *line) {
     ev_blocking = 1;
   } else if (strcmp(parts[0], "UNBLOCK") == 0) {
     ev_blocking = 0;
+  } else if (strcmp(parts[0], "HOTKEY") == 0 && n == 3) {
+    hotkey_code = atoi(parts[1]);
+    hotkey_mod_mask = atoi(parts[2]);
+    if (hotkey_code == 0 || (hotkey_mod_mask & ~(MOD_CTRL | MOD_ALT | MOD_SHIFT | MOD_SUPER))) {
+      hotkey_code = 0;
+      hotkey_mod_mask = 0;
+    }
+  } else if (strcmp(parts[0], "CLICK_CONSUMED") == 0) {
+    ev_pending_passthrough = 0; /* main opened the menu: the click is absorbed by the wheel */
+  } else if (strcmp(parts[0], "CURSORQ") == 0) {
+    char reply[48];
+    snprintf(reply, sizeof(reply), "CURSOR %lld %lld", cur_x, cur_y);
+    emit(reply);
   } else if (strcmp(parts[0], "POS") == 0 && n == 3) {
     ev_last_x = atoi(parts[1]);
     ev_last_y = atoi(parts[2]);
+    cur_x = ev_last_x;
+    cur_y = ev_last_y;
 
   } else if (strcmp(parts[0], "TRIGGER") == 0) {
     if (ev_click_injected && ev_trigger_src) {
@@ -1201,7 +1272,7 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
      * appear before they are readable — a periodic poll is simple and never misses.
      */
     struct timeval tv = {1, 0}, *tvp = &tv;
-    if (ev_trigger_held && !ev_trigger_hold_mode) { tv.tv_sec = 0; tv.tv_usec = 15000; }
+    if (ev_pending_passthrough || (ev_trigger_held && !ev_trigger_hold_mode)) { tv.tv_sec = 0; tv.tv_usec = 15000; }
     int ready = select(maxfd + 1, &fds, NULL, NULL, tvp);
     if (ready < 0 && errno != EINTR) break;
 
@@ -1243,13 +1314,20 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
               if (bit) {
                 if (evs[k].value != 0) ev_mod_mask |= bit;
                 else ev_mod_mask &= ~bit;
+              } else if (hotkey_code && evs[k].code == (unsigned)hotkey_code) {
+                /** Press = fire; release is left alone so the app sees a normal key pair. */
+                if (evs[k].value != 0) {
+                  if (ev_mod_mask == hotkey_mod_mask) emit("HOTKEY_PRESSED");
+                }
               }
             }
           }
         }
         if (got == 0 || (got < 0 && errno != EAGAIN)) {
           close(kbd_fds[i]);
-          kbd_fds[i] = kbd_fds[--kbd_count];
+          strcpy(kbd_nodes[i], kbd_nodes[kbd_count - 1]);
+          kbd_fds[i] = kbd_fds[kbd_count - 1];
+          kbd_count--;
         }
       }
     }
@@ -1260,6 +1338,11 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
       ev_blocking = 0;
       fprintf(stderr, "rovyl-helper-linux: no session heartbeat for %d ms while blocking — auto-unblocked\n",
               BLOCK_WATCHDOG_MS);
+    }
+    if (ev_pending_passthrough && evdev_now_ms() >= ev_pending_at) {
+      ev_pending_passthrough = 0;
+      inject_button(ev_pending_src, ev_pending_btn, 1);
+      inject_button(ev_pending_src, ev_pending_btn, 0);
     }
     ev_poll_click_hold();
   }

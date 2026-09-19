@@ -2401,6 +2401,20 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       gestureConsumedRef.current = true;
       const { folderStack, apps, currentLevelApps, onClose, config } = stateRef.current;
 
+      /**
+       * A click on the empty area (the scrim — tiles stop their own events, so anything that
+       * reaches this handler from outside the hub is not on an icon) is a DISMISS, never a
+       * confirm: in angle mode the aim lights a slice from anywhere on screen, and confirming
+       * here turned every "click away to close" into an accidental launch.
+       */
+      if (
+        e.target instanceof Element &&
+        e.target.classList.contains('zn-radial-scrim')
+      ) {
+        onClose(null);
+        return;
+      }
+
       /** The target is where the aim is NOW, not what the last render managed to record. */
       const point = trackAimPoint({ x: e.clientX, y: e.clientY });
       const aim = resolveAimAtPoint(point);
@@ -3146,7 +3160,6 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
      * marks the quarantine AFTERWARDS — the guard never blocks its own launch, only a following
      * human click.
      */
-    if (Date.now() < quarantineUntilRef.current) return;
     /** Echo running: the target is already decided and the wheel on its way out — nothing under it opens anything. */
     if (launchEchoTimerRef.current !== null) return;
     /**
