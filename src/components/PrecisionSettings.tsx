@@ -249,6 +249,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
 }) => {
   const { t, dir } = useTranslation(config.language);
 
+  const isLinux = navigator.userAgent.includes('Linux');
   /** Follow pointer needs the global cursor position — Wayland doesn't expose one. */
   const [waylandLimited, setWaylandLimited] = React.useState(false);
   React.useEffect(() => {
@@ -907,8 +908,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         {
           key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu', group: 'Activation',
           title: 'Menu on middle click over apps',
-          description: waylandLimited
-            ? 'On: a quick middle click opens the menu AND does the native action (known quirk). Off: middle click stays 100% native everywhere — open the menu with the hotkey instead.'
+          description: isLinux
+            ? 'On: a middle click opens the menu (the normal middle-click action is cancelled). Off: middle click behaves exactly like without Rovyl — open the menu with the hotkey.'
             : 'A quick middle click opens the menu.',
           kind: 'bool', enabled: config.middleClickOpensMenu !== false,
           onToggle: () => {
@@ -917,8 +918,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
         {
           key: 'openAtLogin', configKey: 'openAtLogin', group: 'Startup',
-          title: waylandLimited ? 'Launch at startup' : 'Start with Windows',
-          description: waylandLimited ? 'Adds an XDG autostart entry at sign-in.' : 'Rovyl is ready as soon as you sign in to Windows.',
+          title: isLinux ? 'Launch at startup' : 'Start with Windows',
+          description: isLinux ? 'Rovyl starts when you sign in.' : 'Rovyl is ready as soon as you sign in to Windows.',
           kind: 'bool', enabled: Boolean(config.openAtLogin),
           onToggle: () => {
             const next = !config.openAtLogin;

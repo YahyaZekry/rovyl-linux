@@ -4408,6 +4408,9 @@ app.whenReady().then(async () => {
       if (typeof ui.enableMouseTrigger === "boolean") {
         cachedRadialFlags.enableMouseTrigger = ui.enableMouseTrigger;
       }
+      if (typeof ui.middleClickOpensMenu === "boolean") {
+        cachedRadialFlags.middleClickOpensMenu = ui.middleClickOpensMenu;
+      }
       if (ui.mouseTriggerMode === "click" || ui.mouseTriggerMode === "hold") {
         cachedRadialFlags.mouseTriggerMode = ui.mouseTriggerMode;
       }
