@@ -38,6 +38,7 @@ import {
   Settings,
   Shapes,
   Shield,
+  MousePointerClick,
   Square,
   SquareStack,
   TerminalSquare,
@@ -252,6 +253,35 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   const isLinux = navigator.userAgent.includes('Linux');
   /** Follow pointer needs the global cursor position — Wayland doesn't expose one. */
   const [waylandLimited, setWaylandLimited] = React.useState(false);
+  /** Middle-click calibration: 5 natural clicks set the menu threshold (slowest + 150 ms). */
+  const [clickCalibration, setClickCalibration] = React.useState<{ durations: number[]; last: number } | null>(null);
+
+  React.useEffect(() => {
+    if (!clickCalibration) return;
+    let downAt = 0;
+    const onDown = (e: MouseEvent) => {
+      if (e.button === 0) downAt = performance.now();
+    };
+    const onUp = (e: MouseEvent) => {
+      if (e.button !== 0 || !downAt) return;
+      downAt = 0;
+      const duration = Math.round(performance.now() - downAt);
+      const durations = [...clickCalibration.durations, duration];
+      if (durations.length >= 5) {
+        const slowest = Math.max(...durations);
+        update('menuHoldMinMs', Math.min(1000, Math.max(150, slowest + 150)));
+        setClickCalibration(null);
+      } else {
+        setClickCalibration({ ...clickCalibration, durations, last: duration });
+      }
+    };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('mouseup', onUp, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('mouseup', onUp, true);
+    };
+  }, [clickCalibration]);
   React.useEffect(() => {
     let cancelled = false;
     void window.electron?.isWaylandNative?.().then((info) => {
@@ -1008,6 +1038,21 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
               (value) => update('menuHoldMinMs', Math.round(value)),
               (value) => `${Math.round(value)} ms`, 50, 'menuHoldMinMs')]
           : []),
+        ...(clickCalibration
+          ? [{
+              key: 'clickCalibrationActive', group: 'Mouse',
+              title: 'Calibrating — click anywhere in this window',
+              description: `${clickCalibration.durations.length}/5 clicks captured. Click like you are closing a browser tab.`,
+              kind: 'action' as const, actionLabel: 'Cancel', actionIcon: X,
+              onRun: () => setClickCalibration(null),
+            }]
+          : [{
+              key: 'clickCalibration', group: 'Mouse',
+              title: 'Calibrate the middle click',
+              description: 'Clicks 5 times like you are closing a tab, learns your natural timing, and sets the menu threshold for you.',
+              kind: 'action' as const, actionLabel: 'Calibrate', actionIcon: MousePointerClick,
+              onRun: () => setClickCalibration({ durations: [], last: 0 }),
+            }]),
         {
           key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
           /**
