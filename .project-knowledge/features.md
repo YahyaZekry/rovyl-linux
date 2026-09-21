@@ -1,6 +1,6 @@
 # Features & Workflows
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-14
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-21
 
 ## Features
 
@@ -12,6 +12,8 @@
 - **Shortcut types** — apps, folders, files, URLs (favicon via web), custom commands, terminal-wrapped commands, IDE MRU files (VS Code family `state.vscdb`)
 - **Settings panel** — `PrecisionSettings.tsx`: trigger, monitors, aiming, appearance, i18n, backups (import/export with inlined icons)
 - **Focus protection** — won't open over fullscreen games (game-detection)
+- **Middle-click calibration** — Settings → Mouse (click mode) → "Calibrate from your own clicks": two-sided, 3 fast presses (tab close) then 2 slower presses (menu intent); the threshold is the midpoint between slowest-fast and fastest-slow (fallback slowest + 150 ms). Main streams every press duration, the renderer owns the phases, and a steps modal shows progress. Applied live (save path re-arms the helper TRIGGER). Bands: < threshold pure native click, threshold…1 s menu (held back, CLICK_CONSUMED cancels), > 1 s autoscroll handover
+- **Double middle click opens the menu** (optional, click mode) — helper TRIGGER carries dblMs=300: a single fast click is held back through the window then lands natively (~300 ms late); a second press inside the window cancels it and emits `TRIGGER_DOUBLE`, the second gesture is swallowed natively, and main opens the menu. Off by default
 - **Tray** — pause/resume, workspaces, settings, quit; autostart toggle
 - **Licensing** — Google OAuth, gate screen without license (vestigial per TODO §2.4)
 

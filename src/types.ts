@@ -406,6 +406,7 @@ export interface UIConfig {
   middleClickOpensMenu?: boolean;
   /** Click mode: holds at/after this many ms open the menu; faster clicks stay native. */
   menuHoldMinMs?: number;
+  doubleClickOpensMenu?: boolean;
   /** click: an MMB click opens and leaves the radial open; hold: holding opens, releasing runs the selection. */
   mouseTriggerMode?: 'click' | 'hold';
   /** toggle: pressing shortcut opens/closes; hold: holding shortcut opens, releasing runs selection or closes. */
@@ -501,6 +502,11 @@ export interface ElectronAPI {
   /** Real pointer position while the wheel is open (Wayland has no global cursor query). */
   wheelCursor?: (x: number | null, y: number | null) => void;
   isWaylandNative?: () => Promise<{ wayland: boolean }>;
+  /** Middle-click calibration: main measures real middle-press durations. */
+  calibrationStart?: () => void;
+  calibrationCancel?: () => void;
+  onCalibrationStarted?: (callback: () => void) => () => void;
+  onCalibrationSample?: (callback: (ms: number) => void) => () => void;
   /** A click the gesture helper swallowed outside the wheel/panel — click away closes it. */
   onBlockClick?: (callback: () => void) => () => void;
 

@@ -60,18 +60,29 @@ sandbox: launch with `ELECTRON_DISABLE_SANDBOX=1`.
 
 ## Middle click behaviour — read this
 
-One physical button can't be both "native middle click" and "open the menu", so:
+One physical button can't be both "native middle click" and "open the menu", so click
+mode splits presses by how long you hold them:
 
-- **A quick middle click does the native thing** (closes a browser tab, opens a link in a
-  new tab) **and** opens the menu. Both. That's the current behaviour; the menu appearing
-  is the known quirk.
-- **Holding it past a second** hands the button to the app — that's autoscroll, if your
-  browser/desktop has it enabled for the `rovyl-fwd-…` device.
-- **Launch at startup** (Settings → Startup) writes a real XDG autostart entry on Linux.
+- **Under the threshold** — a pure native click (closes a browser tab, opens a link).
+  The menu never opens, and the click lands instantly.
+- **Between the threshold and one second** — the menu opens, and the native click is
+  cancelled.
+- **Past one second** — the button is handed to the app (autoscroll, if your desktop has
+  it enabled for the `rovyl-fwd-…` device).
 
-Full control lives in **Settings → Activation**: trigger button, mode, hotkey. If the
-double-behaviour bothers you, switch the trigger to a side button or the hotkey and your
-middle button stays 100% native.
+No guessing at milliseconds: **Settings → Mouse → Calibrate from your own clicks** walks
+you through five real presses — three fast (like closing a tab), two slower (like you
+want the menu) — and sets the boundary between them. You can also drag the threshold by
+hand ("Menu hold threshold").
+
+If one click is too cramped, enable **Double middle click opens the menu**: two quick
+presses open the wheel and a single press always stays native (it lands ~300 ms late
+while Rovyl listens for the second press).
+
+Full control lives in **Settings → Activation / Mouse**: trigger button, mode, hotkey —
+and "Menu on middle click over apps" turns the menu-off gesture entirely, keeping your
+middle button 100% native. **Launch at startup** (Settings → Startup) writes a real XDG
+autostart entry.
 
 ## Known limitations on Wayland
 

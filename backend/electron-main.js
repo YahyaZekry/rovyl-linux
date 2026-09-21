@@ -2495,7 +2495,30 @@ let requestBlockerRespawn = null;
 let openRadialFromShortcutRef = null;
 /** Re-sends the current hotkey to a (fresh) helper; set once shortcut state exists. */
 let refreshHelperHotkey = null;
-
+/**
+ * Module-scope mirror of the menu threshold. `cachedRadialFlags` lives in the whenReady closure
+ * and is NOT visible from `setRadialTriggerCapture` (that ReferenceError silently killed every
+ * trigger re-arm); the settings-sync paths keep this copy current.
+ */
+let menuHoldMinMsSetting = 0;
+/** Module-scope mirror of the double-middle-click option (same reason as the threshold). */
+let dblClickOpensMenuSetting = false;
+/** Two fast presses inside this window are a double click; also how long a single fast click
+ * is held back before it lands natively. 300 ms is the middle of common DE double-click times. */
+const DOUBLE_CLICK_WINDOW_MS = 300;
+/**
+ * Middle-click calibration: while active, every middle-press duration is measured and sent to
+ * the Settings renderer, which sets the menu threshold from the user's own clicks. The menu is
+ * suppressed while calibrating so stray presses do not open anything.
+ */
+let middleClickCalibration = null;
+ipcMain.on("start-middle-click-calibration", () => {
+  middleClickCalibration = { samples: [] };
+  sendToSettings("calibration-started");
+});
+ipcMain.on("cancel-middle-click-calibration", () => {
+  middleClickCalibration = null;
+});
 /** Drag slop: below this the press was a click, not an aim. */
 const TRIGGER_PASSTHROUGH_SLOP_PX = 6;
 
@@ -2756,6 +2779,13 @@ function ensureRadialMouseBlocker() {
         }
       } else if (line === "BUTTONS_UP") {
         settleMouseButtonsUp();
+      } else if (line === "BLOCK_CLICK") {
+        /** A blocked click away from the wheel/panel: the wheel takes it as "close me". */
+        try {
+          sendToOverlay("block-click");
+        } catch (e) {
+          diagLog(`[RadialBlocker] block click: ${e.message}`);
+        }
       }
     }
     if (radialTriggerListener && text.includes("TRIGGER_")) {
@@ -2961,10 +2991,16 @@ ipcMain.on("wheel-cursor", (_event, x, y) => {
 function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragPx) {
   if (process.platform !== "win32" && process.platform !== "linux") return;
   ensureRadialMouseBlocker();
-  const menuMinMs = Math.max(0, Number(cachedRadialFlags.menuHoldMinMs) || 0);
-  writeRadialMouseBlocker(
-    `TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx} ${menuMinMs}`,
-  );
+  if (process.platform === "linux") {
+    const menuMinMs = Math.max(0, Number(menuHoldMinMsSetting) || 0);
+    const dblMs = dblClickOpensMenuSetting ? DOUBLE_CLICK_WINDOW_MS : 0;
+    writeRadialMouseBlocker(
+      `TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx} ${menuMinMs} ${dblMs}`,
+    );
+  } else {
+    /** The Windows helper parses at most 6 fields — extra ones make it DROP the whole command. */
+    writeRadialMouseBlocker(`TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx}`);
+  }
 }
 
 function clearRadialTriggerCapture() {
@@ -3885,6 +3921,7 @@ app.whenReady().then(async () => {
     enableKeyboardTrigger: true,
     enableMouseTrigger: true,
     middleClickOpensMenu: true,
+    doubleClickOpensMenu: false,
     menuHoldMinMs: 350,
     mouseTriggerMode: "click",
     mouseTriggerButton: "middle",
@@ -3980,12 +4017,18 @@ app.whenReady().then(async () => {
     if (Number.isFinite(ui.menuHoldMinMs) && ui.menuHoldMinMs >= 100) {
       currentSettings.menuHoldMinMs = ui.menuHoldMinMs;
       menuHoldMinMsSetting = ui.menuHoldMinMs;
+      rearmRadialTrigger();
     }
     if (typeof ui.enableMouseTrigger === "boolean") {
       currentSettings.enableMouseTrigger = ui.enableMouseTrigger;
     }
     if (typeof ui.middleClickOpensMenu === "boolean") {
       currentSettings.middleClickOpensMenu = ui.middleClickOpensMenu;
+    }
+    if (typeof ui.doubleClickOpensMenu === "boolean") {
+      currentSettings.doubleClickOpensMenu = ui.doubleClickOpensMenu;
+      dblClickOpensMenuSetting = ui.doubleClickOpensMenu;
+      rearmRadialTrigger();
     }
     if (ui.mouseTriggerMode === "click" || ui.mouseTriggerMode === "hold") {
       currentSettings.mouseTriggerMode = ui.mouseTriggerMode;
@@ -4116,10 +4159,12 @@ app.whenReady().then(async () => {
   }
 
   /** Used with the non-blocking middle-button state monitor. */
+  let mouseHook = null;
   const cachedRadialFlags = {
     enableMouseTrigger: currentSettings.enableMouseTrigger !== false,
     menuHoldMinMs: Number.isFinite(currentSettings.menuHoldMinMs) ? currentSettings.menuHoldMinMs : 350,
     middleClickOpensMenu: currentSettings.middleClickOpensMenu !== false,
+    doubleClickOpensMenu: currentSettings.doubleClickOpensMenu === true,
     mouseTriggerMode:
       currentSettings.mouseTriggerMode === "hold" ? "hold" : "click",
     shortcutTriggerMode:
@@ -4128,6 +4173,17 @@ app.whenReady().then(async () => {
       ? currentSettings.mouseTriggerButton
       : "middle",
     performanceMode: false,
+  };
+
+  /** A live threshold/mode change re-arms the capture without tearing the hook down.
+   * Declared at the top of the closure ON PURPOSE: the settings-save paths call it, and a
+   * first-run save can fire before the hook is even created — a deeper placement was hit
+   * before initialization ("rearmRadialTrigger is not defined" in the save log). */
+  const rearmRadialTrigger = () => {
+    if (!mouseHook) return;
+    const virtualKey = MOUSE_TRIGGER_VK[cachedRadialFlags.mouseTriggerButton] ?? MOUSE_TRIGGER_VK.middle;
+    const mode = cachedRadialFlags.mouseTriggerMode === "click" ? "click" : "hold";
+    setRadialTriggerCapture(virtualKey, mode, TRIGGER_PASSTHROUGH_SLOP_PX, MMB_CLICK_BACKSTOP_MS, MMB_CLICK_DRAG_PX);
   };
   try {
     const cp = path.join(app.getPath("userData"), "config-v2.json");
@@ -4140,6 +4196,8 @@ app.whenReady().then(async () => {
         cachedRadialFlags.enableMouseTrigger = fc.enableMouseTrigger;
       }
       cachedRadialFlags.middleClickOpensMenu = fc.middleClickOpensMenu !== false;
+      cachedRadialFlags.doubleClickOpensMenu = fc.doubleClickOpensMenu === true;
+      dblClickOpensMenuSetting = cachedRadialFlags.doubleClickOpensMenu;
       if (Number.isFinite(fc.menuHoldMinMs) && fc.menuHoldMinMs >= 100) {
         cachedRadialFlags.menuHoldMinMs = fc.menuHoldMinMs;
         menuHoldMinMsSetting = fc.menuHoldMinMs;
@@ -4441,6 +4499,11 @@ app.whenReady().then(async () => {
       }
       if (typeof ui.middleClickOpensMenu === "boolean") {
         cachedRadialFlags.middleClickOpensMenu = ui.middleClickOpensMenu;
+      }
+      if (typeof ui.doubleClickOpensMenu === "boolean") {
+        cachedRadialFlags.doubleClickOpensMenu = ui.doubleClickOpensMenu;
+        dblClickOpensMenuSetting = ui.doubleClickOpensMenu;
+        rearmRadialTrigger();
       }
       if (Number.isFinite(ui.menuHoldMinMs) && ui.menuHoldMinMs >= 100) {
         cachedRadialFlags.menuHoldMinMs = ui.menuHoldMinMs;
@@ -6494,7 +6557,9 @@ app.whenReady().then(async () => {
 
   // 2. Middle-button capture by the global WH_MOUSE_LL hook in `backend/mouse-blocker.ps1`.
   //    It is NOT polling: the hook sees every mouse event in the system, movement included.
-  let mouseHook = null;
+  //    Declared at the TOP of the closure (see rearmRadialTrigger below): the first renderer
+  //    save can fire before this line used to run, and a TDZ read through rearmRadialTrigger
+  //    would reject the save.
   /** The button the current probe was started with — compared to know whether it has to be restarted. */
   let activeMouseHookButton = "middle";
   let activeMouseHookMode = null;
@@ -6655,6 +6720,26 @@ app.whenReady().then(async () => {
         const msg = line.trim();
         if (!msg) continue;
 
+        if (msg === "TRIGGER_DOUBLE") {
+          /**
+           * The helper saw the second press of a double click (first click held back and now
+           * cancelled). The follow-up TRIGGER_DOWN/TRIGGER_UP of this gesture still arrive —
+           * the UP is eaten via the suppress flag, since the helper swallowed it natively.
+           */
+          if (middleClickCalibration) continue;
+          if (cachedRadialFlags.mouseTriggerMode !== "click") continue;
+          if (cachedRadialFlags.middleClickOpensMenu === false) continue;
+          suppressNextMmbRelease = true;
+          void (async () => {
+            try {
+              if (await shouldOpenMenu()) showMenuAtCursor("mmb-double");
+            } catch (e) {
+              diagLog(`[MouseHook] double click: ${e.message}`);
+            }
+          })();
+          continue;
+        }
+
         if (msg === "TRIGGER_DOWN") {
           const now = Date.now();
           mmbIsDown = true;
@@ -6743,6 +6828,12 @@ app.whenReady().then(async () => {
             continue;
           }
           if (wasHold) {
+            if (middleClickCalibration && mmbClickDownAt) {
+              const heldMs = Date.now() - mmbClickDownAt;
+              /** Stream every press; the Settings renderer owns the phases and the finish. */
+              middleClickCalibration.samples.push(Number.isFinite(heldMs) ? heldMs : 0);
+              sendToSettings("calibration-sample", heldMs);
+            }
             mmbClickDownAt = 0;
             continue;
           }
@@ -6762,6 +6853,17 @@ app.whenReady().then(async () => {
              * `mmbClickDownAt`, so that orphan release no longer opens anything.
              */
             const heldMs = downAt ? Date.now() - downAt : Number.POSITIVE_INFINITY;
+            if (middleClickCalibration) {
+              middleClickCalibration.samples.push(Number.isFinite(heldMs) ? heldMs : 0);
+              /** Stream every press; the Settings renderer owns the phases and the finish. */
+              sendToSettings("calibration-sample", heldMs);
+              /** The helper may be holding this release back for the menu — take it away. */
+              try {
+                if (radialMouseBlocker?.stdin?.writable) radialMouseBlocker.stdin.write("CLICK_CONSUMED\n");
+              } catch (e) { /* helper gone; nothing to cancel */ }
+              mmbClickDownAt = 0;
+              continue;
+            }
             if (heldMs > MMB_CLICK_BACKSTOP_MS) {
               /** This one's only failure mode is a click refused in silence: it goes in the log. */
               diagLog(
@@ -6794,9 +6896,13 @@ app.whenReady().then(async () => {
              */
             if (!allowed || mmbHoldGestureId !== gestureId) continue;
             /**
-             * Click mode is both-fire (Windows parity): the helper already delivered the native
-             * middle click at release, and the menu opens on top of it. Click-away dismisses.
+             * The helper held this release back (it was at least menuMinMs long) waiting to see
+             * whether the menu absorbs it. It did: cancel the deferred native click, or the app
+             * under the wheel eats a middle click 250 ms after the wheel opens.
              */
+            try {
+              if (radialMouseBlocker?.stdin?.writable) radialMouseBlocker.stdin.write("CLICK_CONSUMED\n");
+            } catch (e) { /* helper gone; nothing to cancel */ }
             showMenuAtCursor("mmb-click");
             continue;
           }

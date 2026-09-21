@@ -6,11 +6,17 @@
 # is never touched.
 #
 # Scenarios (each must hold or the script exits non-zero):
-#   A  quick middle click   -> TRIGGER_DOWN, TRIGGER_UP, click forwarded to the app
+#   A  quick middle click with a live menu -> TRIGGER_DOWN, TRIGGER_UP, consumed
+#   A2 quick middle click, no menu         -> click forwarded to the app
+#   H  mid-band press (menuMin <= held < holdMs), CLICK_CONSUMED -> click never lands
+#   I  mid-band press, no answer           -> click falls through ~250 ms after release
+#   J  double-click watch (dblMs)          -> single held back then delivered; double emits
+#                                             TRIGGER_DOUBLE and no native click lands
 #   B  long hold (>holdMs)  -> TRIGGER_HOLD, click injected mid-hold (autoscroll handover)
-#   C  drag >dragPx         -> TRIGGER_HOLD, click injected mid-hold
-#   D  BLOCK + POS outside  -> swallowed (no BTN_LEFT on the forwarded node)
-#   E  BLOCK + POS inside   -> left click forwarded
+#   C  drag >dragPx          -> TRIGGER_HOLD, click injected mid-hold
+#   F  hotkey                -> HOTKEY_PRESSED via passive keyboard watch
+#   D  BLOCK + POS outside   -> swallowed (no BTN_LEFT on the forwarded node)
+#   E  BLOCK + POS inside    -> left click forwarded
 #
 set -euo pipefail
 
@@ -84,6 +90,51 @@ echo "p 2" >&4; sleep 0.15; echo "r 2" >&4; sleep 0.5
 C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH1=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
 [ "$C1" -gt "$C0" ] || fail "A2: passthrough click not delivered"
 [ "$TH1" = "$TH0" ] || fail "A2: unexpected autoscroll injection"
+
+# H: mid-band press (menuMin=350, holdMs=1000, held 500ms) -> TRIGGER_UP, click held back,
+#    CLICK_CONSUMED (menu absorbed it) -> the native click never lands
+C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH0=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+UP0=$(grep -c "TRIGGER_UP" "$TMP/helper.out" || true)
+echo "TRIGGER 4 click 6 1000 30 350" >&3; sleep 0.4
+echo "p 2" >&4; sleep 0.5; echo "r 2" >&4; sleep 0.15
+MID=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true)
+UP1=$(grep -c "TRIGGER_UP" "$TMP/helper.out" || true)
+echo "CLICK_CONSUMED" >&3; sleep 0.5
+C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH1=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+[ "$UP1" -gt "$UP0" ] || fail "H: mid-band press did not emit TRIGGER_UP"
+[ "$MID" = "$C0" ] || fail "H: held-back click delivered before the consume window closed"
+[ "$C1" = "$C0" ] || fail "H: CLICK_CONSUMED did not cancel the deferred native click"
+[ "$TH1" = "$TH0" ] || fail "H: unexpected autoscroll injection"
+
+# I: same mid-band press, main never answers -> the click lands ~250 ms after release
+C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true)
+echo "p 2" >&4; sleep 0.5; echo "r 2" >&4; sleep 0.7
+C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true)
+[ "$C1" -gt "$C0" ] || fail "I: unanswered held-back click never fell through to the app"
+
+# J: double-click watch (dblMs=250)
+# J1: single fast click -> held back for the window, then delivered natively
+C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH0=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+DBL0=$(grep -c "TRIGGER_DOUBLE" "$TMP/helper.out" || true)
+echo "TRIGGER 4 click 6 1000 30 350 250" >&3; sleep 0.4
+echo "p 2" >&4; sleep 0.1; echo "r 2" >&4; sleep 0.15
+MID=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true)
+sleep 0.5
+C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH1=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)
+DBL1=$(grep -c "TRIGGER_DOUBLE" "$TMP/helper.out" || true)
+[ "$DBL1" = "$DBL0" ] || fail "J1: single click misdetected as a double"
+[ "$MID" = "$C0" ] || fail "J1: single click not held back during the double-click window"
+[ "$C1" -gt "$C0" ] || fail "J1: single click never landed after the window"
+[ "$TH1" = "$TH0" ] || fail "J1: unexpected autoscroll injection"
+
+# J2: two fast presses inside the window -> TRIGGER_DOUBLE, neither click lands
+C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true)
+echo "p 2" >&4; sleep 0.1; echo "r 2" >&4; sleep 0.1
+echo "p 2" >&4; sleep 0.2; echo "r 2" >&4; sleep 0.6
+C1=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true)
+DBL2=$(grep -c "TRIGGER_DOUBLE" "$TMP/helper.out" || true)
+[ "$DBL2" -gt "$DBL1" ] || fail "J2: double press did not emit TRIGGER_DOUBLE"
+[ "$C1" = "$C0" ] || fail "J2: a native click leaked out of the double"
 
 # B: long hold -> autoscroll handover (down injected at holdMs, up at release)
 C0=$(grep -c "KEY 274 1" "$TMP/fwd.out" || true); TH0=$(grep -c "TRIGGER_HOLD" "$TMP/helper.out" || true)

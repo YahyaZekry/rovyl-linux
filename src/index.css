@@ -1019,6 +1019,37 @@
 .zs-icon-modal-tabs { flex: none; padding: 0 var(--zn-5) var(--zn-3); }
 .zs-icon-modal-tabs .zs-segmented button { gap: 6px; }
 
+/* Middle-click calibration: a short steps card, not a tabbed sheet. */
+.zs-cal-modal { width: min(430px, 100%); height: auto; }
+.zs-cal-steps { display: flex; flex-direction: column; gap: var(--zn-3); }
+.zs-cal-step { display: flex; gap: var(--zn-3); align-items: flex-start; }
+.zs-cal-step > i {
+  flex: none; width: 22px; height: 22px; display: grid; place-items: center;
+  font-style: normal; font-size: 12px; font-weight: 600;
+  color: var(--zn-text-2); border: 1px solid var(--zn-line); border-radius: 50%;
+}
+.zs-cal-step.active > i { color: var(--zn-text); border-color: var(--zn-accent, var(--zn-line)); }
+.zs-cal-step.done > i { color: var(--zn-text); background: var(--zn-raised); border-color: transparent; }
+.zs-cal-step b { display: block; color: var(--zn-text); font-size: 13px; font-weight: 600; }
+.zs-cal-step p { margin-top: 2px; color: var(--zn-text-2); font-size: 12px; line-height: 1.5; }
+.zs-cal-progress { display: flex; gap: 6px; align-items: center; margin-top: var(--zn-3); }
+.zs-cal-progress > i {
+  flex: 1; height: 4px; border-radius: 2px;
+  background: var(--zn-raised); transition: background 0.2s ease;
+}
+.zs-cal-progress > i.hit { background: var(--zn-text); }
+.zs-cal-times { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--zn-3); }
+.zs-cal-times > span {
+  padding: 3px 9px; font-size: 11.5px; font-variant-numeric: tabular-nums;
+  color: var(--zn-text-2); border: 1px solid var(--zn-line); border-radius: 999px;
+}
+.zs-cal-result { margin-top: var(--zn-4); padding: var(--zn-3) var(--zn-4);
+  border: 1px solid var(--zn-line); border-radius: var(--zn-r-chip); background: var(--zn-raised); }
+.zs-cal-result b { display: block; color: var(--zn-text); font-size: 13px; }
+.zs-cal-result small { display: block; margin-top: 2px; color: var(--zn-text-2); font-size: 11.5px; }
+.zs-cal-actions { flex: none; display: flex; justify-content: flex-end; gap: var(--zn-2);
+  padding: 0 var(--zn-5) var(--zn-5); }
+
 /* The chosen name and the button that ends the choice — the same footer as `.zs-editor`,
    with the current pick spelled out on the left so the modal says what it is about to leave set. */
 .zs-icon-modal > footer {
