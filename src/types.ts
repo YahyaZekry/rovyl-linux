@@ -404,6 +404,8 @@ export interface UIConfig {
   enableMouseTrigger: boolean;
   /** When false, a middle click stays 100% native everywhere — the menu never opens from it. */
   middleClickOpensMenu?: boolean;
+  /** Click mode: holds at/after this many ms open the menu; faster clicks stay native. */
+  menuHoldMinMs?: number;
   /** click: an MMB click opens and leaves the radial open; hold: holding opens, releasing runs the selection. */
   mouseTriggerMode?: 'click' | 'hold';
   /** toggle: pressing shortcut opens/closes; hold: holding shortcut opens, releasing runs selection or closes. */
