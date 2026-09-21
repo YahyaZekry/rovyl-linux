@@ -1,0 +1,5 @@
+# The image only needs the unpacked app tree; everything else stays out of the
+# build context (node_modules alone is gigabytes).
+*
+!linux-unpacked
+**/node_modules
