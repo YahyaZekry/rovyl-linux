@@ -7,7 +7,7 @@
   "description": "Rovyl radial launcher",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arshit09/rovyl.git"
+    "url": "https://github.com/YahyaZekry/rovyl-linux.git"
   },
   "scripts": {
     "dev": "vite",
@@ -115,8 +115,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "arshit09",
-      "repo": "rovyl",
+      "owner": "YahyaZekry",
+      "repo": "rovyl-linux",
       "releaseType": "release"
     },
     "afterPack": "./scripts/after-pack-win-icon.cjs",
