@@ -3979,6 +3979,7 @@ app.whenReady().then(async () => {
     }
     if (Number.isFinite(ui.menuHoldMinMs) && ui.menuHoldMinMs >= 100) {
       currentSettings.menuHoldMinMs = ui.menuHoldMinMs;
+      menuHoldMinMsSetting = ui.menuHoldMinMs;
     }
     if (typeof ui.enableMouseTrigger === "boolean") {
       currentSettings.enableMouseTrigger = ui.enableMouseTrigger;
@@ -4141,6 +4142,7 @@ app.whenReady().then(async () => {
       cachedRadialFlags.middleClickOpensMenu = fc.middleClickOpensMenu !== false;
       if (Number.isFinite(fc.menuHoldMinMs) && fc.menuHoldMinMs >= 100) {
         cachedRadialFlags.menuHoldMinMs = fc.menuHoldMinMs;
+        menuHoldMinMsSetting = fc.menuHoldMinMs;
       }
       if (fc.mouseTriggerMode === "click" || fc.mouseTriggerMode === "hold") {
         cachedRadialFlags.mouseTriggerMode = fc.mouseTriggerMode;
@@ -4442,6 +4444,7 @@ app.whenReady().then(async () => {
       }
       if (Number.isFinite(ui.menuHoldMinMs) && ui.menuHoldMinMs >= 100) {
         cachedRadialFlags.menuHoldMinMs = ui.menuHoldMinMs;
+        menuHoldMinMsSetting = ui.menuHoldMinMs;
         /** Re-arm so the new threshold reaches the helper without a restart. */
         if (mouseHook) {
           stopMouseHook();
