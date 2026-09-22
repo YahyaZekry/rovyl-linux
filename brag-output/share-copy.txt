@@ -1,0 +1,3 @@
+Your middle mouse button has one job. Rovyl gives it a wheel: hold, aim, release — anything on your desktop launches. Kernel-level gesture engine, born on Wayland, no compositor plugins. Free & open source — links in first comment.
+
+#linux #wayland #kde #opensource #productivity
