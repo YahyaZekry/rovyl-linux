@@ -1001,6 +1001,13 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
               },
             ] as SettingItem[])
           : []),
+        ...(config.mouseTriggerMode === 'click'
+          ? [range('menuHoldMinMs', 'Mouse', 'Menu hold threshold',
+              'Middle clicks shorter than this stay pure native (tab close, link). Holds at least this long open the menu instead.',
+              config.menuHoldMinMs ?? 350, 150, 1000,
+              (value) => update('menuHoldMinMs', Math.round(value)),
+              (value) => `${Math.round(value)} ms`, 50, 'menuHoldMinMs')]
+          : []),
         {
           key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
           /**

@@ -421,7 +421,7 @@ static void apply_command(char *line) {
       emit("TRIGGER_OFF");
       return;
     }
-    if (n >= 4 && n <= 6) {
+    if (n >= 4 && n <= 7) {
       int vk = atoi(parts[1]);
       int threshold = atoi(parts[3]);
       if (vk != VK_MIDDLE && vk != VK_X1 && vk != VK_X2) vk = VK_MIDDLE;
@@ -955,6 +955,7 @@ static int ev_trigger_hold_mode;
 static int ev_trigger_threshold;
 static int ev_click_hold_ms = DEFAULT_CLICK_HOLD_MS;
 static int ev_click_drag_px = DEFAULT_CLICK_DRAG_PX;
+static int ev_menu_min_ms;            /* releases at/after this open the menu (0 = never) */
 
 static int ev_trigger_held;
 static struct ev_source *ev_trigger_src;
@@ -1075,10 +1076,17 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
       } else if (!ev_click_press_armed || held >= ev_click_hold_ms ||
                  dist2 >= (long long)ev_click_drag_px * ev_click_drag_px) {
         emit("TRIGGER_HOLD");
-      } else {
+      } else if (ev_menu_min_ms > 0 && held >= ev_menu_min_ms) {
+        /** Deliberate press: main opens the menu and cancels this click (CLICK_CONSUMED).
+         * If main never answers within the delay, the native click is delivered anyway. */
         emit("TRIGGER_UP");
-        /* inject immediately: the app gets its native middle click, and main may still open
-         * the menu — the menu does not eat the action (Windows-parity click mode) */
+        ev_pending_passthrough = 1;
+        ev_pending_src = src;
+        ev_pending_btn = code;
+        ev_pending_at = evdev_now_ms() + PASSTHROUGH_DELAY_MS;
+      } else {
+        /** Faster than the menu threshold: pure native click, no menu involved. */
+        emit("TRIGGER_UP");
         inject_button(src, code, 1);
         inject_button(src, code, 0);
       }
@@ -1186,7 +1194,7 @@ static void ev_apply_command(char *line) {
       emit("TRIGGER_OFF");
       return;
     }
-    if (n >= 4 && n <= 6) {
+    if (n >= 4 && n <= 7) {
       int vk = atoi(parts[1]);
       int threshold = atoi(parts[3]);
       if (vk != VK_MIDDLE && vk != VK_X1 && vk != VK_X2) vk = VK_MIDDLE;
@@ -1194,6 +1202,7 @@ static void ev_apply_command(char *line) {
       ev_trigger_threshold = threshold > 0 ? threshold : 0;
       ev_click_hold_ms = n >= 5 && atoi(parts[4]) > 0 ? atoi(parts[4]) : DEFAULT_CLICK_HOLD_MS;
       ev_click_drag_px = n >= 6 && atoi(parts[5]) > 0 ? atoi(parts[5]) : DEFAULT_CLICK_DRAG_PX;
+      ev_menu_min_ms = n >= 7 && atoi(parts[6]) > 0 ? atoi(parts[6]) : 0;
       ev_trigger_vk = vk;
       emit(source_count > 0 ? "TRIGGER_READY" : "TRIGGER_FAILED");
     }

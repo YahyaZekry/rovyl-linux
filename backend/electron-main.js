@@ -2961,8 +2961,9 @@ ipcMain.on("wheel-cursor", (_event, x, y) => {
 function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragPx) {
   if (process.platform !== "win32" && process.platform !== "linux") return;
   ensureRadialMouseBlocker();
+  const menuMinMs = Math.max(0, Number(cachedRadialFlags.menuHoldMinMs) || 0);
   writeRadialMouseBlocker(
-    `TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx}`,
+    `TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx} ${menuMinMs}`,
   );
 }
 
@@ -3883,6 +3884,8 @@ app.whenReady().then(async () => {
     shortcutTriggerMode: "toggle",
     enableKeyboardTrigger: true,
     enableMouseTrigger: true,
+    middleClickOpensMenu: true,
+    menuHoldMinMs: 350,
     mouseTriggerMode: "click",
     mouseTriggerButton: "middle",
     openAtLogin: false,
@@ -3973,6 +3976,9 @@ app.whenReady().then(async () => {
     }
     if (typeof ui.middleClickOpensMenu === "boolean") {
       currentSettings.middleClickOpensMenu = ui.middleClickOpensMenu;
+    }
+    if (Number.isFinite(ui.menuHoldMinMs) && ui.menuHoldMinMs >= 100) {
+      currentSettings.menuHoldMinMs = ui.menuHoldMinMs;
     }
     if (typeof ui.enableMouseTrigger === "boolean") {
       currentSettings.enableMouseTrigger = ui.enableMouseTrigger;
@@ -4111,6 +4117,7 @@ app.whenReady().then(async () => {
   /** Used with the non-blocking middle-button state monitor. */
   const cachedRadialFlags = {
     enableMouseTrigger: currentSettings.enableMouseTrigger !== false,
+    menuHoldMinMs: Number.isFinite(currentSettings.menuHoldMinMs) ? currentSettings.menuHoldMinMs : 350,
     middleClickOpensMenu: currentSettings.middleClickOpensMenu !== false,
     mouseTriggerMode:
       currentSettings.mouseTriggerMode === "hold" ? "hold" : "click",
@@ -4132,6 +4139,9 @@ app.whenReady().then(async () => {
         cachedRadialFlags.enableMouseTrigger = fc.enableMouseTrigger;
       }
       cachedRadialFlags.middleClickOpensMenu = fc.middleClickOpensMenu !== false;
+      if (Number.isFinite(fc.menuHoldMinMs) && fc.menuHoldMinMs >= 100) {
+        cachedRadialFlags.menuHoldMinMs = fc.menuHoldMinMs;
+      }
       if (fc.mouseTriggerMode === "click" || fc.mouseTriggerMode === "hold") {
         cachedRadialFlags.mouseTriggerMode = fc.mouseTriggerMode;
       }
@@ -4429,6 +4439,14 @@ app.whenReady().then(async () => {
       }
       if (typeof ui.middleClickOpensMenu === "boolean") {
         cachedRadialFlags.middleClickOpensMenu = ui.middleClickOpensMenu;
+      }
+      if (Number.isFinite(ui.menuHoldMinMs) && ui.menuHoldMinMs >= 100) {
+        cachedRadialFlags.menuHoldMinMs = ui.menuHoldMinMs;
+        /** Re-arm so the new threshold reaches the helper without a restart. */
+        if (mouseHook) {
+          stopMouseHook();
+          syncMouseHookState();
+        }
       }
       if (ui.mouseTriggerMode === "click" || ui.mouseTriggerMode === "hold") {
         cachedRadialFlags.mouseTriggerMode = ui.mouseTriggerMode;
@@ -6755,6 +6773,12 @@ app.whenReady().then(async () => {
              * already handed the click to the app, and main never opens the menu from it.
              */
             if (cachedRadialFlags.middleClickOpensMenu === false) {
+              mmbClickDownAt = 0;
+              continue;
+            }
+            const menuMinMs = Number(cachedRadialFlags.menuHoldMinMs) || 0;
+            if (menuMinMs > 0 && heldMs < menuMinMs) {
+              /** Faster than the menu threshold — the helper already delivered the native click. */
               mmbClickDownAt = 0;
               continue;
             }

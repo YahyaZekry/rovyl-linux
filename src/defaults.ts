@@ -395,6 +395,8 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   radialBackKey: DEFAULT_BACK_KEY,
   enableKeyboardTrigger: true,
   enableMouseTrigger: true,
+  middleClickOpensMenu: true,
+  menuHoldMinMs: 350,
   mouseTriggerMode: 'click',
   mouseTriggerButton: 'middle',
   shortcutTriggerMode: 'toggle',
