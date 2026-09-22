@@ -1,5 +1,0 @@
-One gesture, every app on your Linux desktop.
-
-Rovyl turns your middle mouse button into a wheel: hold, aim, release — anything launches. Born on Wayland, no compositor plugins. Free & open source — link in bio.
-
-#linux #wayland #kde #opensource #productivity
