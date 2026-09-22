@@ -1,0 +1,113 @@
+name: Sync fork from upstream
+
+# This fork has diverged hard from arshit09/rovyl (Linux port), so upstream can never
+# fast-forward: the only sync is a real merge. Policy, per the user's ask:
+#   clean merge + green build  -> auto-merge into main and push
+#   conflicts OR build failure -> change NOTHING, open/update "Upstream sync blocked"
+# Verified gate before pushing: npm run build (tsc + vite + the two tree verifiers).
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-fork
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Fetch upstream and count new commits
+        run: |
+          git remote add upstream https://github.com/arshit09/rovyl.git
+          git fetch upstream main
+          echo "NEW_COMMITS=$(git rev-list --count HEAD..upstream/main)" >> "$GITHUB_ENV"
+
+      - name: Nothing to do
+        if: env.NEW_COMMITS == '0'
+        run: echo "Upstream has no new commits — fork is current."
+
+      - name: Merge upstream into main
+        id: merge
+        continue-on-error: true
+        if: env.NEW_COMMITS != '0'
+        run: |
+          git config user.name "rovyl-sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git merge --no-ff --no-edit upstream/main
+
+      - name: Conflicted — flag for a human, change nothing
+        if: steps.merge.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_COMMITS: ${{ env.NEW_COMMITS }}
+        run: |
+          FILES=$(git diff --name-only --diff-filter=U | head -25)
+          git merge --abort || true
+          {
+            echo "Upstream has **${NEW_COMMITS} new commits** and a clean merge is not possible. Nothing was changed on \`main\`."
+            echo
+            echo "Conflicted files:"
+            echo '```'
+            echo "$FILES"
+            echo '```'
+            echo
+            echo "Sync manually — scripted anchored ports per \`.project-knowledge/history.md\`, never hand-merging."
+          } > body.md
+          NUMBER=$(gh issue list --state open --search "Upstream sync blocked in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$NUMBER" ]; then
+            gh issue comment "$NUMBER" --body-file body.md
+          else
+            gh issue create --title "Upstream sync blocked (${NEW_COMMITS} commits)" --body-file body.md
+          fi
+          exit 1
+
+      - name: Verify the merged tree (build gate)
+        id: verify
+        continue-on-error: true
+        if: steps.merge.outcome == 'success'
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential libx11-dev libxtst-dev
+          npm ci
+          npm run build
+
+      - name: Push the merge
+        if: steps.verify.outcome == 'success'
+        run: git push origin main
+
+      - name: Build failed post-merge — flag for a human, do not push
+        if: steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_COMMITS: ${{ env.NEW_COMMITS }}
+        run: |
+          git log -1 --format='%h %s' upstream/main > tip.txt
+          {
+            echo "A clean merge of **${NEW_COMMITS} upstream commits** landed in the working tree but the build gate failed, so it was **not pushed**."
+            echo
+            echo "Upstream tip: $(cat tip.txt)"
+            echo
+            echo "Reproduce locally: \`git fetch upstream && git merge upstream/main\`, fix, commit, push."
+          } > body.md
+          NUMBER=$(gh issue list --state open --search "Upstream sync blocked in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$NUMBER" ]; then
+            gh issue comment "$NUMBER" --body-file body.md
+          else
+            gh issue create --title "Upstream sync blocked (${NEW_COMMITS} commits)" --body-file body.md
+          fi
+          exit 1
