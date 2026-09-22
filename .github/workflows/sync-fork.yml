@@ -69,11 +69,11 @@ jobs:
             echo
             echo "Sync manually — scripted anchored ports per \`.project-knowledge/history.md\`, never hand-merging."
           } > body.md
-          NUMBER=$(gh issue list --state open --search "Upstream sync blocked in:title" --json number --jq '.[0].number // empty')
+          NUMBER=$(gh issue list -R YahyaZekry/rovyl-linux --state open --search "Upstream sync blocked in:title" --json number --jq '.[0].number // empty')
           if [ -n "$NUMBER" ]; then
-            gh issue comment "$NUMBER" --body-file body.md
+            gh issue comment -R YahyaZekry/rovyl-linux "$NUMBER" --body-file body.md
           else
-            gh issue create --title "Upstream sync blocked (${NEW_COMMITS} commits)" --body-file body.md
+            gh issue create -R YahyaZekry/rovyl-linux --title "Upstream sync blocked (${NEW_COMMITS} commits)" --body-file body.md
           fi
           exit 1
 
@@ -104,10 +104,10 @@ jobs:
             echo
             echo "Reproduce locally: \`git fetch upstream && git merge upstream/main\`, fix, commit, push."
           } > body.md
-          NUMBER=$(gh issue list --state open --search "Upstream sync blocked in:title" --json number --jq '.[0].number // empty')
+          NUMBER=$(gh issue list -R YahyaZekry/rovyl-linux --state open --search "Upstream sync blocked in:title" --json number --jq '.[0].number // empty')
           if [ -n "$NUMBER" ]; then
-            gh issue comment "$NUMBER" --body-file body.md
+            gh issue comment -R YahyaZekry/rovyl-linux "$NUMBER" --body-file body.md
           else
-            gh issue create --title "Upstream sync blocked (${NEW_COMMITS} commits)" --body-file body.md
+            gh issue create -R YahyaZekry/rovyl-linux --title "Upstream sync blocked (${NEW_COMMITS} commits)" --body-file body.md
           fi
           exit 1
