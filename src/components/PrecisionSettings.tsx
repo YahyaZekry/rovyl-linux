@@ -212,6 +212,16 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   setNav,
   discoveryPhase = 'idle',
 }) => {
+  /** Follow pointer needs the global cursor position — Wayland doesn't expose one. */
+  const [waylandLimited, setWaylandLimited] = React.useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    void window.electron?.isWaylandNative?.().then((info) => {
+      if (!cancelled && info?.wayland) setWaylandLimited(true);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const { t, dir } = useTranslation(config.language);
 
   const sectionsList = useMemo(() => [
@@ -923,7 +933,9 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           kind: 'segmented',
           choices: [
             { value: 'primary', label: 'Main screen' },
-            { value: 'cursor', label: 'Follow pointer' },
+            waylandLimited
+              ? { value: 'cursor', label: 'Follow pointer (limited by Wayland)' }
+              : { value: 'cursor', label: 'Follow pointer' },
           ],
           current: config.radialMonitor === 'cursor' ? 'cursor' : 'primary',
           onChange: (value) => update('radialMonitor', value as UIConfig['radialMonitor']),

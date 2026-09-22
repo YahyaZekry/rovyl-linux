@@ -1997,7 +1997,12 @@ let radialFollowsCursorMonitor = false;
  * lets the value seeded from disk at boot survive a renderer that does not send it.
  */
 function applyRadialMonitorSetting(value) {
-  if (value === "cursor") radialFollowsCursorMonitor = true;
+  /**
+   * Wayland: "follow pointer" needs the global cursor position, which Wayland never gives an app
+   * — the choice is kept in settings but behaves like "main screen" until a cursor source exists
+   * (KDE foreign-toplevel / libei, see docs/wayland-port-plan.md).
+   */
+  if (value === "cursor") radialFollowsCursorMonitor = !isWaylandNative;
   else if (value === "primary") radialFollowsCursorMonitor = false;
 }
 ipcMain.on("set-radial-viewport", (_event, payload) => {
@@ -8367,6 +8372,7 @@ ipcMain.handle("was-opened-at-login", () => {
 });
 
 ipcMain.handle("get-app-version", () => app.getVersion());
+ipcMain.handle("get-platform-info", () => ({ wayland: isWaylandNative }));
 
 /**
  * Distribution channel, from the point of view of WHO updates:
