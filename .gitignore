@@ -59,3 +59,7 @@ build/appx/
 # Markdown preview exports
 TODO.html
 linux-unpacked/
+
+# video render working dirs (user's content pipeline)
+brag-output/
+brag-output-vertical/
