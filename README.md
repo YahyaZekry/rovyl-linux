@@ -185,3 +185,14 @@ version, you have to release its source under the same licence.
 
 The copyright holder is not bound by that outbound licence, so the build sold on the
 Microsoft Store is distributed under Microsoft's standard terms. Both are the same code.
+
+---
+
+<details>
+<summary>🧠 AI Context</summary>
+
+This project uses the [project-knowledge](https://github.com/YahyaZekry/project-knowledge-skill) skill to maintain a `.project-knowledge/` folder — a living, AI-readable map of the codebase. Every AI session loads only the files relevant to the current task instead of scanning from scratch.
+
+Built by [Yahya Zekry](https://github.com/YahyaZekry/project-knowledge-skill).
+
+</details>
