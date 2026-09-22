@@ -37,5 +37,11 @@ export function startMenuAppIdToLaunchCommand(appId: string): string {
    * icon lookup asks with the same mangled string).
    */
   if (navigator.userAgent.includes('Linux')) return id;
+  /**
+   * Linux picker entries are `desktop:<id>` launch lines as-is — wrapping them in the Windows
+   * AppsFolder moniker produced commands no Linux launcher understands (and no icons, since the
+   * icon lookup asks with the same mangled string).
+   */
+  if (navigator.userAgent.includes('Linux')) return id;
   return `shell:AppsFolder\\${id}`;
 }

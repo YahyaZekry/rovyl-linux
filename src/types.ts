@@ -25,9 +25,24 @@ export interface AppItem {
   type?: "app" | "folder";
   label: string;
   iconName: string;
-  iconSource?: "lucide" | "native"; // New property: 'lucide' for vector, 'native' for custom/extracted image
+  /**
+   * Where the icon comes from.
+   * 'lucide' — the `iconName` glyph.
+   * 'native' — a bitmap Rovyl found by itself (the program's icon, the site's favicon), kept up to
+   *   date by the healing pass and re-extracted when the pipeline changes.
+   * 'custom' — the user chose it: the picture in `customIconUrl`, or, with none, the `iconName`
+   *   glyph in place of the program's own icon. Nothing automatic ever replaces it.
+   */
+  iconSource?: "lucide" | "native" | "custom";
   /** `rovyl-icon://` reference to a file in userData, an `https:` favicon, or a legacy `data:` URL. */
-  customIconUrl?: string; // Supports base64 images or URLs
+  customIconUrl?: string;
+  /**
+   * The file a custom picture was taken from, as Windows writes an icon location:
+   * `C:\Icons\app.png`, or `C:\Windows\System32\shell32.dll,4` for the fifth icon in a library.
+   * Only there so the workspace file can name it; the picture itself is `customIconUrl`. Absent
+   * for a picture that was pasted.
+   */
+  customIconFile?: string;
   direction?: string;
   command: string;
   /**
@@ -38,7 +53,13 @@ export interface AppItem {
    * ladder builds `<terminal> /c <line>`, and a `.pdf` down that route opens a console window or
    * nothing at all.
    */
-  commandType?: "app" | "url" | "folder" | "file";
+  commandType?: "app" | "url" | "folder" | "file" | "command";
+  /**
+   * `command` only: which shell reads the line, and whether a console window shows it. Unset means
+   * PowerShell in a window that stays open, so the output of a typo can still be read.
+   */
+  commandShell?: "powershell" | "cmd";
+  commandWindow?: "open" | "hidden";
   description: string;
   shortcut?: string;
   children?: AppItem[];
@@ -76,11 +97,38 @@ export interface GameModeConfig {
 }
 
 /**
- * What the taskbar does while the wheel is open. Shape and defaults live in
- * `src/utils/taskbarOverlay.ts`, because the main process needs the same answers and a second copy
- * of that reasoning is how the two drift.
+ * The two corner docks drawn beside the open wheel. Shape, defaults and every rule about them live
+ * in `src/utils/screenDocks.ts`, because the wheel, the settings panel and the window sizing all
+ * need the same answers and a second copy of them is how the three drift.
  */
-export type { TaskbarOverlayFlags } from "./utils/taskbarOverlay";
+export type {
+  DockPosition,
+  ShortcutDockConfig,
+  StatusDockConfig,
+} from "./utils/screenDocks";
+
+/**
+ * One reading of the things the status dock displays, as the main process reports it.
+ *
+ * Every number carries its own "not available": `-1` for a machine with no battery and for a
+ * network with no signal quality to give (a cable has none), `null` for a whole reading that has
+ * not arrived yet. A readout that cannot distinguish "0%" from "unknown" shows a flat battery to
+ * somebody sitting at a desktop PC.
+ */
+export interface SystemStatus {
+  /** 0-100, or -1 when there is no audio endpoint to ask. */
+  volume: number;
+  muted: boolean;
+  network: "none" | "ethernet" | "wifi" | "other";
+  /** Wi-Fi signal quality, 0-100. -1 on anything that is not Wi-Fi. */
+  signal: number;
+  /** 0-100, or -1 on a machine with no battery. */
+  battery: number;
+  charging: boolean;
+}
+
+/** The Windows panels a status readout may open. Named, never spelled as a URI by the renderer. */
+export type SystemPanel = "volume" | "network" | "battery" | "clock";
 
 export interface Workspace {
   id: string;
@@ -92,7 +140,35 @@ export interface Workspace {
   color?: string; // Optional project/workspace color
   /** Lucide icon on the first wheel when `workspaceSwitchMode === 'picker'`. Omitted → Layers. */
   pickerIconName?: string;
+  /**
+   * A picture chosen for the workspace, drawn instead of `pickerIconName` — a `rovyl-icon://`
+   * reference, like `AppItem.customIconUrl`. The glyph stays as the fallback if the file is gone.
+   */
+  pickerIconUrl?: string;
+  /** Where that picture came from — see `AppItem.customIconFile`. */
+  pickerIconFile?: string;
 }
+
+/**
+ * What a file offers as a custom icon, as main reads it (`readCustomIconSource`).
+ * `image` is raw bytes still to be normalized; `library` is every icon a program or icon library
+ * holds, with the requested one at full size; `shell` is the icon Windows draws for anything else,
+ * already stored.
+ */
+export type CustomIconSource =
+  | { ok: true; kind: "image"; path: string; dataUrl: string }
+  | {
+      ok: true;
+      kind: "library";
+      path: string;
+      index: number;
+      count: number;
+      /** One per icon, in the file's order; an empty string where one could not be drawn. */
+      thumbnails: string[];
+      dataUrl: string | null;
+    }
+  | { ok: true; kind: "shell"; path: string; ref: string }
+  | { ok: false; error: string };
 
 export const CLOCK_HUD_POSITIONS = [
   'top-left',
@@ -104,6 +180,21 @@ export const CLOCK_HUD_POSITIONS = [
 ] as const;
 
 export type ClockHudPosition = (typeof CLOCK_HUD_POSITIONS)[number];
+
+/**
+ * Where the settings gear may sit while the wheel is open.
+ *
+ * Corners only, unlike the HUD's regions: the middle of an edge is the one place a small target
+ * must not be, because that is where a wedge aimed at the top or the bottom of the wheel ends up.
+ */
+export const SETTINGS_CORNERS = [
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+] as const;
+
+export type SettingsCorner = (typeof SETTINGS_CORNERS)[number];
 
 export interface UIConfig {
   accentColor: string;
@@ -130,6 +221,21 @@ export interface UIConfig {
    */
   radialMonitor?: 'primary' | 'cursor';
   /**
+   * WHERE on that monitor the wheel is born — the companion to `radialMonitor`, which chooses only
+   * the screen.
+   * 'center' — the middle of the screen (default, and what shipped).
+   * 'cursor' — under the pointer, so the wheel appears where the hand already is and no item is
+   *   further away than the gesture that opened it.
+   *
+   * This is NOT the old `fixedPosition`: that stored a point the user had dragged the wheel to and
+   * pinned it there forever. This one stores no point at all — it is read live, at every open.
+   *
+   * Near a screen edge the centre is pulled back just far enough to keep the whole ring reachable
+   * (main clamps it with the `ring` reach sent through `setRadialViewport`); a wheel half off the
+   * screen is items that cannot be aimed at.
+   */
+  radialPlacement?: 'center' | 'cursor';
+  /**
    * "Background dimming", 0..1. At 1 the desktop is gone: an opaque fill over the whole monitor.
    * Read it through `radialScrimAlphas` — the number is not an alpha, and how it maps to one
    * changed. `backdropDimScale` says which mapping the saved value belongs to.
@@ -142,16 +248,20 @@ export interface UIConfig {
    */
   backdropDimScale?: number;
   /**
-   * What happens to the Windows taskbar while the wheel is up, on the wheel's monitor only.
+   * The readouts — clock, battery, network, volume — in one corner of the open wheel.
    *
    * ABSENT means off, which is what every config written before this feature says. Read it through
-   * `normalizeTaskbarOverlay`, never field by field: a blob from disk may be missing any of them.
-   *
-   * Only the elements are reliably undoable. `transparent` repaints the bar's background, and
-   * Windows offers no way to read back what explorer had there, so it is opt-in and says so in the
-   * settings row. See docs/ARCHITECTURE.md, "The taskbar while the wheel is open".
+   * `normalizeStatusDock`, never field by field: a blob from disk may be missing any of them, and
+   * a missing `iconSize` read as 0 is a dock that is enabled, placed and invisible.
    */
-  taskbarOverlay?: import("./utils/taskbarOverlay").TaskbarOverlayFlags;
+  statusDock?: import("./utils/screenDocks").StatusDockConfig;
+  /**
+   * The user's own icons, in a corner of the open wheel. Same rule: `normalizeShortcutDock`.
+   *
+   * Its `items` are ordinary `AppItem`s so that one launch path serves both these and the wheel —
+   * a second way to run a shortcut is a second place for launch failures to be reported wrongly.
+   */
+  shortcutDock?: import("./utils/screenDocks").ShortcutDockConfig;
   menuBackgroundStyle: "circle" | "fullscreen";
   appSpacing: number; // New: spacing between apps in radial menu
   activationThreshold: number;
@@ -159,6 +269,8 @@ export interface UIConfig {
   showLabels: boolean;
   /** When true, app names stay visible for all items; when false, only the hovered/selected item shows its label. */
   alwaysShowAppLabels: boolean;
+  /** The pill under the wheel naming where you are (workspace, then folders). Absent means on. */
+  showWorkspacePill?: boolean;
   showBattery: boolean; // New
   showWeather: boolean; // New
   weatherLocation?: string; // New: CEP or city name for weather
@@ -193,8 +305,12 @@ export interface UIConfig {
    * How the wheel decides the target.
    * 'angle'  — direction from the center; the slice lights up even with the cursor far away (default).
    * 'cursor' — only lights up when the pointer is right over the icon.
+   * 'area'   — the same maths as 'angle', with the division DRAWN: the wheel is cut into as many
+   *            equal wedges as there are items and the one being pointed at fills with a gradient.
+   *            Same targeting, so a config can move between the two without relearning the aim —
+   *            what changes is that the boundaries stop being something to infer.
    */
-  radialSelectionMode?: 'angle' | 'cursor';
+  radialSelectionMode?: 'angle' | 'cursor' | 'area';
   /**
    * Launch without a click: holding the aim on a target for `radialInstantDwellMs` launches it.
    *
@@ -220,7 +336,71 @@ export interface UIConfig {
    * meant something before the hand moved.
    */
   radialInstantSensitivity?: 'low' | 'medium' | 'high';
+  /**
+   * Number keys pick AND run: while the wheel is up, 1-9 launch the shortcut sitting in that
+   * position, with no Enter and no aiming. The digits count from the top and go clockwise, the
+   * same order the wheel is laid out in, and they address the level on screen — inside a folder
+   * they are that folder's items, on the workspace picker they are the workspaces.
+   *
+   * It CLAIMS the digits. `workspaceSwitchMode: 'hotkeys'` registers 1-9 as global shortcuts while
+   * the wheel is open, and two features cannot own one key: with this on, the wheel asks main not
+   * to register them and switching by number goes back to the picker wheel. That is said out loud
+   * in the settings row rather than discovered by pressing 2 and watching an app open.
+   *
+   * Off by default: it turns a keystroke that filtered ("Photoshop 2024") into one that launches.
+   */
+  radialNumberLaunch?: boolean;
+  /**
+   * Whether each tile carries its digit while `radialNumberLaunch` is on. Read as `!== false`:
+   * a number you cannot see is a number you have to count to, so the badges are what the feature
+   * ships with and hiding them is the deliberate step — for someone who has learned the wheel and
+   * wants the icons back unmarked.
+   *
+   * Means nothing on its own: with number launching off, no tile is numbered whatever this says.
+   */
+  radialNumberLabels?: boolean;
+  /**
+   * The single key that leaves a folder — the hub's keyboard equivalent, since the centre could
+   * only ever be clicked. Stored upper case; an empty string means no key at all.
+   *
+   * It only fires where the hub actually says "Back": one level deep or more, with nothing typed.
+   * At the root there is nothing to leave, so the key goes back to being a character the filter can
+   * have — which is what keeps `qBittorrent` reachable with the default binding.
+   *
+   * Read it through `normalizeBackKey`; a config can be hand-edited and this one is a free string.
+   *
+   * Means nothing while `radialNumberLaunch` is off, exactly like `radialNumberLabels`: that switch
+   * owns the keyboard-driven wheel and this key is part of it. The wheel checks the pair, not this
+   * alone — a binding that acts with no visible setting behind it is indistinguishable from a bug.
+   */
+  radialBackKey?: string;
+  /**
+   * A gear in a corner of the open wheel, which opens Settings.
+   *
+   * Rovyl's other doors to Settings are all gestures you have to know about — the tray icon, a
+   * double middle-click — and none of them is visible from the wheel itself. This one is, at the
+   * cost of one more thing painted over the desktop, so it is opt-in.
+   *
+   * Turning it on makes the overlay cover the whole monitor (`radialScrimNeedsFullBleed` asks for
+   * the same thing at high dimming): the window is normally only a box around the wheel, and a
+   * "corner" of that box is not a corner of the screen — it is a gear floating beside the wheel.
+   *
+   * It is NOT offered while click-free launching aims by direction: that mode hides the pointer
+   * and parks it at the centre, so there is no way to reach a corner, and a click anywhere
+   * launches whatever the gesture is pointing at. The gear hides itself there rather than sit on
+   * screen unclickable.
+   */
+  showSettingsCorner?: boolean;
+  /** Which corner it sits in. Absent means `top-right`. */
+  settingsCorner?: SettingsCorner;
   openAtLogin?: boolean; // New: Start app at login
+  /**
+   * Whether the global shortcut opens the wheel at all.
+   *
+   * Optional, and read as `!== false`: every config written before this key existed had a working
+   * keyboard trigger, and absence has to keep meaning that rather than silently taking it away.
+   */
+  enableKeyboardTrigger?: boolean;
   enableMouseTrigger: boolean;
   /** When false, a middle click stays 100% native everywhere — the menu never opens from it. */
   middleClickOpensMenu?: boolean;
@@ -284,12 +464,18 @@ export interface UpdateState {
 export interface ElectronAPI {
   executeCommand: (
     command: string,
-    commandType: "app" | "url" | "folder" | "file",
-    options?: { openTerminal?: boolean; terminalCommands?: string[]; workingDirectory?: string; launchMode?: "normal" | "reuse" | "prewarm" },
+    commandType: "app" | "url" | "folder" | "file" | "command",
+    options?: {
+      openTerminal?: boolean;
+      terminalCommands?: string[];
+      workingDirectory?: string;
+      launchMode?: "normal" | "reuse" | "prewarm";
+      commandShell?: "powershell" | "cmd";
+      commandWindow?: "open" | "hidden";
+    },
   ) => Promise<LaunchResult>;
   hideWindow: () => void;
   showWindow: () => void;
-  requestKeyboardFocus?: () => void;
   getAppVersion?: () => Promise<string>;
   /**
    * Distribution channel, from the updater's point of view: 'store' (MSIX) and 'unsupported'
@@ -310,25 +496,20 @@ export interface ElectronAPI {
   wasOpenedAtLogin?: () => Promise<boolean>;
   /** The main confirms the app really has an IDE profile with an MRU (do not guess by name). */
   appSupportsRecents?: (appName: string, appCommand: string) => Promise<boolean>;
-  /** A click the gesture helper swallowed outside the wheel/panel — click away closes it. */
-  onBlockClick?: (callback: () => void) => () => void;
   /** Real pointer position while the wheel is open (Wayland has no global cursor query). */
   wheelCursor?: (x: number | null, y: number | null) => void;
   isWaylandNative?: () => Promise<{ wayland: boolean }>;
+  /** A click the gesture helper swallowed outside the wheel/panel — click away closes it. */
+  onBlockClick?: (callback: () => void) => () => void;
+
   onOpenMenu: (
     callback: (data: {
-      x: number;
-      y: number;
       source?: "mmb" | "mmb-click" | "shortcut";
-      /** True when the main already applied fullscreen — avoids a second `applyWindowSize` in the renderer. */
-      preSizedByMain?: boolean;
-      /** The panel stays on screen under the radial — the renderer cannot close it. */
-      keepPanel?: boolean;
-      /** Screen rect of the panel; only when the window was widened and it needs repositioning. */
-      panelRect?: { x: number; y: number; width: number; height: number } | null;
-      /** Center already converted to the new HWND's coordinates; avoids stale metrics after Settings. */
+      /** Main already knows the wheel is open: this event must never open nor confirm a selection. */
+      closeOnly?: boolean;
+      /** Centre of the overlay window, in its own coordinates — never read `window.screenX/Y` instead. */
       clientPosition?: { x: number; y: number } | null;
-      /** Native origin matching the clientPosition/panelRect during the handshake. */
+      /** The overlay's origin on screen, as main set it a moment ago. */
       windowOrigin?: { x: number; y: number } | null;
       /** Authoritative viewport after the resize; the renderer may still report the Settings size. */
       clientSize?: { width: number; height: number } | null;
@@ -336,19 +517,53 @@ export interface ElectronAPI {
       paintToken?: number;
     }) => void,
   ) => () => void;
-  /**
-   * Before opening the radial from the main — cover the old frame (e.g. the dashboard on restore).
-   *
-   * `vacatePanel`: the panel must instead LEAVE the window's surface, because main is about to move
-   * the window out from under it. See `panelVacatingForRadial` in App.tsx.
-   */
-  onPrepareRadialShow?: (
-    callback: (payload: { vacatePanel?: boolean }) => void,
-  ) => () => void;
-  notifyRadialPrepPaintDone?: () => void;
   notifyRadialOpenPaintDone?: (paintToken: number) => void;
   /** The native window is already visible; releases the animation of the radial prepped at zero alpha. */
   onRadialNativeRevealed?: (callback: (paintToken: number) => void) => () => void;
+
+  /* ---- The overlay window's own channels. Only `radial.html` ever calls these. ---- */
+
+  /**
+   * The wheel has finished: main puts the overlay back to an invisible, click-through idle box.
+   *
+   * Separate from `hideWindow`, which belongs to the settings window — two windows, two lifecycles,
+   * and conflating them is exactly what made one HWND serve two jobs in the first place.
+   */
+  closeRadial?: () => void;
+  /** Main took the overlay down without being asked (game mode, quit, a gesture that never landed). */
+  onRadialHidden?: (callback: () => void) => () => void;
+  /** The config file changed on disk; the payload is the whole blob, as `getFullConfig` returns it. */
+  onConfigChanged?: (callback: (blob: any) => void) => () => void;
+  /** The settings window owns the Start Menu scan and says how far along it is. */
+  onDiscoveryPhase?: (
+    callback: (phase: 'idle' | 'waiting' | 'scanning') => void,
+  ) => () => void;
+  /** Wheel → writer: the user switched workspace mid-gesture; persist it. */
+  radialWorkspaceChanged?: (index: number) => void;
+  /** Wheel → writer: the direction-mode hint has been read and does not come back. */
+  radialDirectionHintSeen?: () => void;
+  /** Wheel → writer: a launch failed, and the card that reports it lives in the settings window. */
+  reportRadialLaunchFault?: (fault: {
+    raw: string;
+    details?: unknown;
+    appLabel?: string;
+    shortcut?: { workspaceIndex: number; appId: string; rootId: string };
+  }) => void;
+
+  /* ---- The same three, arriving in the settings window. Only `index.html` listens. ---- */
+
+  /** Settings → wheel: how far the Start Menu scan has got, so an empty wheel can say why. */
+  publishDiscoveryPhase?: (phase: 'idle' | 'waiting' | 'scanning') => void;
+  onRadialWorkspaceChanged?: (callback: (index: number) => void) => () => void;
+  onRadialDirectionHintSeen?: (callback: () => void) => () => void;
+  onRadialLaunchFault?: (
+    callback: (fault: {
+      raw: string;
+      details?: unknown;
+      appLabel?: string;
+      shortcut?: { workspaceIndex: number; appId: string; rootId: string };
+    }) => void,
+  ) => () => void;
   onOpenDashboard: (callback: () => void) => () => void;
   onMouseUp: (callback: () => void) => () => void;
   onMmbRelease: (callback: () => void) => () => void;
@@ -359,37 +574,13 @@ export interface ElectronAPI {
   onOpenSettings: (callback: () => void) => () => void;
   /** Fired when the OS hid the window to tray (not a real quit). */
   onWindowHidToTray: (callback: () => void) => () => void;
-  /** Main window minimize/restore — the panel can stay in React state but the island must come back on minimize. */
-  onMainWindowMinimized?: (
-    callback: (payload: { minimized: boolean }) => void,
-  ) => () => void;
-  onWindowNativeDisplayRestored: (
-    callback: (payload: {
-      mode: "small" | "fullscreen" | "windowed";
-    }) => void,
-  ) => () => void;
   onCleanMemory?: (callback: () => void) => () => void;
   onShortcutRelease?: (callback: () => void) => () => void;
-  setWindowSize: (
-    mode: "small" | "fullscreen" | "windowed",
-    /** Screen coordinates (e.g. cursor) — which monitor should receive the fullscreen/small overlay */
-    anchorScreenPoint?: { x: number; y: number },
-  ) => void;
-  /** Awaitable resize — use before showing the radial so the first paint is not still windowed bounds. */
-  applyWindowSize?: (
-    mode: "small" | "fullscreen" | "windowed",
-    anchorScreenPoint?: { x: number; y: number },
-  ) => Promise<boolean>;
-  /** Pre-warms small↔fullscreen once after startup (island HWND shrunk). */
-  warmRadialTransition?: () => Promise<boolean>;
-  /** Re-applies desktop passthrough overlay after closing a fullscreen widget (fixes flaky clicks on Windows). */
-  reapplySmallOverlay?: () => Promise<boolean>;
-  /** Idle: shrinks the HWND into the corner (no fullscreen transparent layer). */
-  collapseIdleOverlay?: () => Promise<boolean>;
   /**
    * Side of the radial's box (px) + whether the position is fixed — the main sizes the menu window
    * with this. `fullBleed` overrides the box entirely: the dimming reaches the edge, so the window
-   * has to be the monitor (see `radialScrimNeedsFullBleed`).
+   * takes the screen (see `radialScrimNeedsFullBleed`). The screen meaning the work area — main
+   * stops the window at the taskbar, which it would otherwise cover with the scrim.
    */
   setRadialViewport?: (payload: {
     size: number;
@@ -397,6 +588,14 @@ export interface ElectronAPI {
     fullBleed?: boolean;
     /** Which monitor the wheel is born on — see `UIConfig.radialMonitor`. */
     monitor?: 'primary' | 'cursor';
+    /** Where on it — see `UIConfig.radialPlacement`. */
+    placement?: 'center' | 'cursor';
+    /**
+     * How far the drawn wheel reaches from its own centre (px). Only `placement: 'cursor'` uses it,
+     * to keep the ring on the screen when the pointer is in a corner. Main cannot derive it: `size`
+     * has the gesture margin baked in and is several hundred px wider than anything visible.
+     */
+    ring?: number;
   }) => void;
   /**
    * Click-free launching on: when the radial opens, the main stores where the cursor was, puts it
@@ -406,47 +605,44 @@ export interface ElectronAPI {
   setRadialCursorCapture?: (enabled: boolean) => void;
   /** Pulls the cursor back to the center without ending the gesture — used when it drifts off the window. */
   parkRadialCursor?: () => void;
-  /** Panel (Settings/Welcome) actually in view — decides whether the radial opens on top of it. */
-  setPanelSurfaceVisible?: (visible: boolean) => void;
-  /** Clears island passthrough / hit-shape so widgets and panels receive clicks immediately. */
-  ensureWindowInteractive?: () => Promise<boolean>;
-  /** Windows/Linux: island — `coordinateSpace: "screen"` shrinks the HWND; without it, client coords + setShape. */
-  setWindowHitShape?: (
-    rects: Array<{ x: number; y: number; width: number; height: number }>,
-    opts?: { coordinateSpace?: "screen" | "client" },
-  ) => Promise<boolean>;
-  /** 0–1; used to hide the window during fullscreen resize to avoid DWM stretching the old settings frame (flash). */
-  setWindowOpacity: (opacity: number) => void;
-  /** Schedules a full Chromium repaint — helps transparent frameless windows on Windows after show/resize. */
-  invalidatePaint?: () => Promise<boolean>;
-  /** Webview area on screen — prefer it over `screenX`/`screenY` when computing hit-shape after a resize. */
-  getMainWindowContentBounds?: () => Promise<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>;
+  /**
+   * The hub has been picked up and the wheel wants the whole screen to be carried across.
+   *
+   * Main grows the overlay to the display the wheel is on. The new geometry arrives separately, on
+   * `onRadialDragGeometry`, and it arrives BEFORE the window actually moves — which is the point:
+   * client coordinates are measured from a corner that is about to shift by several hundred pixels,
+   * and a renderer told afterwards paints one frame with the new size and the old centre.
+   */
+  requestRadialDragSpace?: () => void;
+  /**
+   * Where this window's client area is about to start, and how big it is about to be. Applied on
+   * the `resize` that follows, so the two halves of the change land in the same frame.
+   */
+  onRadialDragGeometry?: (
+    callback: (geometry: {
+      windowOrigin: Coordinates;
+      clientSize: { width: number; height: number };
+    }) => void,
+  ) => () => void;
   setGameMode: (config: GameModeConfig) => void;
   /**
-   * Main enacts this one, so it has to hold the flags BEFORE a wheel opens -- the global shortcut
-   * is registered before React has committed anything, so main also seeds them from disk at boot.
+   * Whether the status dock needs live readings. Main owns the helper that produces them, so it is
+   * told what the switches say and decides for itself whether a process is worth starting.
    */
-  setTaskbarOverlay?: (config: import("./utils/taskbarOverlay").TaskbarOverlayFlags) => void;
+  setStatusDockActive?: (active: boolean) => void;
+  /** The last reading main has. Resolves immediately from its cache; never starts a helper to answer. */
+  getSystemStatus?: () => Promise<SystemStatus>;
+  /** Pushed whenever a reading changes while the wheel is up. */
+  onSystemStatus?: (callback: (status: SystemStatus) => void) => () => void;
+  /** 0-100. Applied to the default output device, the same one the reading comes from. */
+  setSystemVolume?: (percent: number) => void;
+  setSystemMuted?: (muted: boolean) => void;
   /**
-   * Which taskbar this machine has: 'classic' | 'mixed' | 'xaml' | 'none'.
-   *
-   * Answering costs a helper process, so it is asked for only when the settings section that needs
-   * it is on screen, and the answer is cached for the session.
+   * Opens one of Windows' own panels. An ENUM and not a URI: the renderer naming the exact
+   * `ms-settings:` string would be a renderer that can ask the shell to open anything.
    */
-  getTaskbarCapability?: () => Promise<string>;
+  openSystemPanel?: (panel: SystemPanel) => void;
   prewarmApps?: (commands: string[]) => void;
-  getVolume: () => Promise<number>;
-  setVolume: (value: number) => void;
-  getBrightness: () => Promise<number>;
-  setBrightness: (value: number) => void;
-  getHardwareCapabilities: () => Promise<{ hasWifi: boolean; hasBluetooth: boolean }>;
-  toggleWifi: (enabled: boolean) => Promise<boolean>;
-  toggleBluetooth: (enabled: boolean) => Promise<boolean>;
   getFileIcon: (path: string) => Promise<string | null>;
   /** Favicon fetched in the main (data URL) — the renderer usually fails with <img https://…>. */
   getWebsiteFaviconDataUrl?: (pageUrl: string) => Promise<string | null>;
@@ -466,9 +662,14 @@ export interface ElectronAPI {
    */
   selectFile: (options?: { mode?: "executable" | "any" }) => Promise<string | null>;
   selectFolder: () => Promise<string | null>;
-  selectImage: () => Promise<string | null>;
-  /** Removes a file only if it lives under userData/custom-icons (safe no-op otherwise). */
-  removeManagedCustomIcon: (urlOrPath?: string) => Promise<void>;
+  /** The open dialog for a custom icon: pictures, icon files, programs, or any file's own icon. */
+  chooseCustomIconFile?: () => Promise<string | null>;
+  /** Accepts `path` or `path,index`, with `%VARIABLES%`. */
+  readCustomIconSource?: (source: string) => Promise<CustomIconSource>;
+  /** One icon from a program or icon library, full size, as a PNG data URL. */
+  extractLibraryIcon?: (filePath: string, index: number) => Promise<string | null>;
+  /** A normalized PNG data URL in, its `rovyl-icon://` reference out. */
+  storeCustomIcon?: (pngDataUrl: string) => Promise<string | null>;
   getInstalledApps: (forceRefresh?: boolean) => Promise<any[]>;
   getOnboardingApps: () => Promise<any[]>;
   getStartupApps: () => Promise<any[]>;
@@ -516,6 +717,11 @@ export interface ElectronAPI {
   setWorkspaceShortcutsState: (
     isOpen: boolean,
     workspaceSwitchMode?: 'hotkeys' | 'picker',
+    /**
+     * The wheel is handling 1-9 itself (`radialNumberLaunch`), so main must NOT register them as
+     * global shortcuts — registered, they never reach the renderer at all.
+     */
+    numberKeysClaimed?: boolean,
   ) => void;
   exportConfig: () => Promise<{ success: boolean; error?: string }>;
   importConfig: () => Promise<{ success: boolean; error?: string }>;
