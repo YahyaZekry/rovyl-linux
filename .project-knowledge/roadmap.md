@@ -15,7 +15,7 @@ Port Rovyl to Linux: X11 full experience, Wayland = hotkey-only fallback.
 - electron-builder `linux` target (deb+AppImage) added to package.json
 
 **Remaining:**
-1. Wayland helper mode (evdev grab + uinput) — THE next big item; maintainer is Wayland-only
+1. Wayland helper mode (evdev grab + uinput) — **DONE 2026-09-14, live on the maintainer's Wayland session** (helper in `mouse-blocker-evdev` mode, trigger armed, forwarded pointer registered). Virtual-device E2E suite verified: click passthrough, hold, drag mid-hold injection, BLOCK swallow/forward by POS. Awaiting only human acceptance: hold MMB anywhere. Next: deb packaging (udev rule + input-group postinst), CI workflows
 2. CI workflows per plan §5a; local `npm run dist`
 3. ~~Electron upgrade~~ **DONE 2026-09-14: 28.3.3 → 44.3.0** — build clean, all 17 smoke tests + node tests pass, app boots on XWayland AND native Wayland (window, Alt+Z globalShortcut registration, trigger armed). Electron 44's globalShortcut.register is instant on Wayland (no portal hang)
 4. Wayland launch recipe (verified): `ELECTRON_OZONE_PLATFORM_HINT=auto` + `ELECTRON_DISABLE_SANDBOX=1` (zen-kernel sandbox blocks GPU without it), and **never** `ZENITH_DISABLE_HARDWARE_ACCELERATION=1` on native Wayland — software rendering never paints the first frame of a transparent window, `ready-to-show` never fires, boot stalls silently. Diag warning added for that combination

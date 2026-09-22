@@ -1,0 +1,6 @@
+# Rovyl: let the active-seat user run the gesture helper without manual group setup.
+# The helper reads mouse/keyboard event nodes (hold-trigger detection) and writes
+# /dev/uinput to inject the clicks the gesture hands back to the app underneath.
+# Reading /dev/input is covered by input-group membership (added by the deb postinst);
+# this rule covers the uinput side. uaccess grants the active seat user rw.
+KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"

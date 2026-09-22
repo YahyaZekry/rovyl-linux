@@ -2053,6 +2053,16 @@ const NATIVE_HELPER_BIN =
       ? "rovyl-helper-linux"
       : null;
 
+/**
+ * A native Wayland session (not XWayland): the gesture host runs on evdev grab + uinput because
+ * X11 grabs only see XWayland clients there. Clickless cursor capture stays off in this mode —
+ * Wayland has no pointer-warp protocol (see docs/wayland-port-plan.md §2.4).
+ */
+const isWaylandNative =
+  process.platform === "linux" &&
+  (process.env.XDG_SESSION_TYPE === "wayland" ||
+    (!!process.env.WAYLAND_DISPLAY && !process.env.DISPLAY));
+
 let cachedNativeHelperPath; // undefined = not probed yet
 
 function getNativeHelperExePath() {
@@ -2154,7 +2164,7 @@ let radialCursorRestorePoint = null;
 let radialCursorParkPoint = null;
 
 function captureRadialCursor(center) {
-  if (!nativeHelperEnabled()) return;
+  if (!nativeHelperEnabled() || isWaylandNative) return;
   if (!radialCursorCaptureWanted || !center) return;
   if (!radialCursorParked) {
     try {
@@ -2202,9 +2212,10 @@ function ensureRadialMouseBlocker() {
   if (!nativeHelperEnabled() || radialMouseBlocker) return;
   radialMouseBlockerReady = false;
   const nativeHelper = getNativeHelperExePath();
+  const blockerArgs = [isWaylandNative ? "mouse-blocker-evdev" : "mouse-blocker", String(process.pid)];
   const child = nativeHelper
-    ? (diagLog(`[RadialBlocker] Spawning native helper: ${nativeHelper}`),
-       spawn(nativeHelper, ["mouse-blocker", String(process.pid)], { windowsHide: true }))
+    ? (diagLog(`[RadialBlocker] Spawning native helper: ${nativeHelper} (${blockerArgs[0]})`),
+       spawn(nativeHelper, blockerArgs, { windowsHide: true }))
     : spawn(
         "powershell",
         [
@@ -2291,6 +2302,35 @@ function setRadialMouseBlocking(bounds, monitorBounds) {
   writeRadialMouseBlocker(
     `BLOCK ${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height} ${monitorBounds.x} ${monitorBounds.y} ${monitorBounds.width} ${monitorBounds.height}`,
   );
+  startWaylandPosFeed();
+}
+
+/**
+ * evdev events carry no absolute position, but BLOCK judges clicks by one: while the wheel is
+ * open on native Wayland, main owns the cursor truth (screen APIs work there) and feeds it to the
+ * helper. Written straight to stdin — the pending-command slots are for session setup, and this
+ * only runs while the helper is already up and BLOCK is live.
+ */
+let waylandPosFeedTimer = null;
+function startWaylandPosFeed() {
+  if (!isWaylandNative || waylandPosFeedTimer) return;
+  waylandPosFeedTimer = setInterval(() => {
+    if (!radialMouseBlocker || !radialMouseBlockerReady || !radialMouseBlocker.stdin?.writable) return;
+    try {
+      const point = screen.getCursorScreenPoint();
+      radialMouseBlocker.stdin.write(`POS ${point.x} ${point.y}\n`);
+    } catch (e) {
+      /* helper died; the exit handler cleans the feed up */
+    }
+  }, 30);
+  waylandPosFeedTimer.unref?.();
+}
+
+function stopWaylandPosFeed() {
+  if (waylandPosFeedTimer) {
+    clearInterval(waylandPosFeedTimer);
+    waylandPosFeedTimer = null;
+  }
 }
 
 /**
@@ -2320,6 +2360,7 @@ function clearRadialTriggerCapture() {
 
 function clearRadialMouseBlocking() {
   pendingRadialMouseBlockCommand = null;
+  stopWaylandPosFeed();
   if (!radialMouseBlocker || !radialMouseBlockerReady) return;
   writeRadialMouseBlocker("UNBLOCK");
 }
@@ -7824,7 +7865,8 @@ function foregroundFocusAssetPath() {
 }
 
 function ensureForegroundFocusHelper() {
-  if (!nativeHelperEnabled() || foregroundFocusHelper) return;
+  /** X11-only: on native Wayland the XWayland FG query answers with a 1x1 stand-in window. */
+  if (isWaylandNative || !nativeHelperEnabled() || foregroundFocusHelper) return;
   foregroundFocusHelperReady = false;
   const nativeHelper = getNativeHelperExePath();
   const child = nativeHelper

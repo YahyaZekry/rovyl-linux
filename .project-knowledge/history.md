@@ -24,3 +24,8 @@
 ## Fixed
 
 - See `TODO.md` checked items (§1.1, §1.3, §2.1, §2.6, §3.1–3.11) with detailed write-ups in that file
+- **2026-09-14: Wayland gesture = evdev grab + uinput reinjection** — every mouse event node is `EVIOCGRAB`ed and re-emitted through a paired uinput device copying full capabilities AND identity (vendor/product/bustype/props) so libinput applies the same DPI/hwdb rules; forward = write to the pair, swallow = don't. Injected events flow out of our own devices, which the scan skips by `rovyl-fwd-` name prefix — no signature scheme needed because there is no feedback path
+- **2026-09-14: `POS x y` protocol extension** — evdev events carry only deltas, but BLOCK must judge clicks by absolute position; main (which owns cursor truth via Electron screen APIs) feeds positions at 30 ms while the wheel is open. Unknown commands are ignored by the other backends, so the extension is safe
+- **2026-09-14: 9-token BLOCK parse bug** — both `apply_command` parsers capped at 8 argv tokens while the BLOCK command has 9 (`BLOCK x y w h mx my mw mh`); BLOCK was silently dropped in the X11 mode AND the new one. Cap raised to 10 in both
+- **2026-09-14: inotify dropped for a 1 s poll** — uinput node creation does not raise IN_CREATE on /dev/input on this kernel (zen 7.2.3), so hotplug rescans run on a select timeout instead; simpler and cannot miss
+- **2026-09-14: clickless execution off on native Wayland** — no pointer-warp protocol exists; the capture gate skips WARP-dependent paths (see docs/wayland-port-plan.md §2.4)

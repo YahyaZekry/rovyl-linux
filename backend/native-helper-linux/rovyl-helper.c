@@ -24,15 +24,21 @@
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/XTest.h>
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
+#include <linux/input.h>
+#include <linux/uinput.h>
 
 /* Mouse VKs the JS side sends (same numbers the Windows helper takes). */
 #define VK_RIGHT 2
@@ -41,13 +47,13 @@
 #define VK_X2 6
 
 /* Button1..5 are left/right/middle/scroll-up/scroll-down in X11; X1/X2 are 8/9. */
-#define BTN_LEFT 1
-#define BTN_MIDDLE 2
-#define BTN_RIGHT 3
-#define BTN_SCROLL_UP 4
-#define BTN_SCROLL_DOWN 5
-#define BTN_X1 8
-#define BTN_X2 9
+#define XBTN_LEFT 1
+#define XBTN_MIDDLE 2
+#define XBTN_RIGHT 3
+#define XBTN_SCROLL_UP 4
+#define XBTN_SCROLL_DOWN 5
+#define XBTN_X1 8
+#define XBTN_X2 9
 
 /* Modifier mask bits, matching the Windows helper's GetCurrentModifierMask. */
 #define MOD_CTRL 1
@@ -121,11 +127,11 @@ static int query_modifier_mask(void) {
 
 static int vk_to_button(int vk) {
   switch (vk) {
-    case VK_RIGHT: return BTN_RIGHT;
-    case VK_MIDDLE: return BTN_MIDDLE;
-    case VK_X1: return BTN_X1;
-    case VK_X2: return BTN_X2;
-    default: return BTN_MIDDLE;
+    case VK_RIGHT: return XBTN_RIGHT;
+    case VK_MIDDLE: return XBTN_MIDDLE;
+    case VK_X1: return XBTN_X1;
+    case VK_X2: return XBTN_X2;
+    default: return XBTN_MIDDLE;
   }
 }
 
@@ -134,7 +140,7 @@ static int grabs_installed;
 static void uninstall_grabs(void) {
   if (!grabs_installed) return;
   static const int all_buttons[] = {
-    BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SCROLL_UP, BTN_SCROLL_DOWN, BTN_X1, BTN_X2,
+    XBTN_LEFT, XBTN_MIDDLE, XBTN_RIGHT, XBTN_SCROLL_UP, XBTN_SCROLL_DOWN, XBTN_X1, XBTN_X2,
   };
   for (unsigned i = 0; i < sizeof(all_buttons) / sizeof(all_buttons[0]); i++) {
     XUngrabButton(dpy, all_buttons[i], AnyModifier, root);
@@ -206,9 +212,9 @@ static void inject_button_up(int button) {
 
 static const char *record_name_for(int button) {
   switch (button) {
-    case BTN_MIDDLE: return "Middle";
-    case BTN_X1: return "Mouse4";
-    case BTN_X2: return "Mouse5";
+    case XBTN_MIDDLE: return "Middle";
+    case XBTN_X1: return "Mouse4";
+    case XBTN_X2: return "Mouse5";
     default: return "RightClick";
   }
 }
@@ -233,11 +239,11 @@ static void handle_button_press(int button, int x, int y) {
   }
 
   if (record_mode) {
-    int is_recordable = button == BTN_MIDDLE || button == BTN_X1 ||
-                        button == BTN_X2 || button == BTN_RIGHT;
+    int is_recordable = button == XBTN_MIDDLE || button == XBTN_X1 ||
+                        button == XBTN_X2 || button == XBTN_RIGHT;
     if (is_recordable) {
       int mods = query_modifier_mask();
-      if (button == BTN_RIGHT && mods == 0) {
+      if (button == XBTN_RIGHT && mods == 0) {
         XAllowEvents(dpy, ReplayPointer, CurrentTime);
         return;
       }
@@ -331,19 +337,19 @@ static void reinstall_grabs(void) {
   if (trigger_button_vk) grab_button(vk_to_button(trigger_button_vk));
   if (shortcut_button) grab_button(vk_to_button(shortcut_button));
   if (record_mode) {
-    grab_button(BTN_MIDDLE);
-    grab_button(BTN_RIGHT);
-    grab_button(BTN_X1);
-    grab_button(BTN_X2);
+    grab_button(XBTN_MIDDLE);
+    grab_button(XBTN_RIGHT);
+    grab_button(XBTN_X1);
+    grab_button(XBTN_X2);
   }
   if (blocking) {
-    grab_button(BTN_LEFT);
-    grab_button(BTN_MIDDLE);
-    grab_button(BTN_RIGHT);
-    grab_button(BTN_SCROLL_UP);
-    grab_button(BTN_SCROLL_DOWN);
-    grab_button(BTN_X1);
-    grab_button(BTN_X2);
+    grab_button(XBTN_LEFT);
+    grab_button(XBTN_MIDDLE);
+    grab_button(XBTN_RIGHT);
+    grab_button(XBTN_SCROLL_UP);
+    grab_button(XBTN_SCROLL_DOWN);
+    grab_button(XBTN_X1);
+    grab_button(XBTN_X2);
   }
   XSync(dpy, False);
   grabs_installed = 1;
@@ -378,9 +384,9 @@ static void poll_click_hold(void) {
 
 static void apply_command(char *line) {
   char *save = NULL;
-  char *parts[8] = {0};
+  char *parts[10] = {0};
   int n = 0;
-  for (char *p = strtok_r(line, " ", &save); p && n < 8; p = strtok_r(NULL, " ", &save)) {
+  for (char *p = strtok_r(line, " ", &save); p && n < 10; p = strtok_r(NULL, " ", &save)) {
     parts[n++] = p;
   }
   if (n == 0) return;
@@ -667,6 +673,578 @@ static void run_foreground_focus(void) {
   XCloseDisplay(dpy);
 }
 
+/* ---------------------------------------------------------------- evdev/uinput mode (native Wayland)
+ *
+ * The compositor owns the pointer on Wayland, so there is nothing to grab protocol-wise. This mode
+ * works one level lower, the way input-remapper/keyd/ydotool do: EVIOCGRAB every mouse-class
+ * /dev/input node (the events stop reaching the compositor) and re-emit them through a paired
+ * uinput device (the compositor reads that instead). "Forward" = write the event to the paired
+ * device; "swallow" = don't. The gesture/blocking state machine is the same one the Windows hook
+ * and the X11 mode implement; `POS x y` feeds the helper the cursor position from the main process
+ * (evdev events carry only deltas, and BLOCK judges clicks by position). Injected events come out
+ * of our own virtual devices, which are never grabbed and always skip the grab scan, so no
+ * signature scheme is needed — there is no feedback path back into this process.
+ */
+
+#define MAX_DEVICES 64
+#define NAME_PREFIX "rovyl-fwd-"
+
+struct ev_source {
+  int ev_fd;   /* grabbed source, -1 when unused */
+  int ui_fd;   /* paired uinput device */
+  char name[96];
+  char devnode[32];
+};
+
+static struct ev_source sources[MAX_DEVICES];
+static int source_count;
+static int kbd_fds[MAX_DEVICES];
+static int kbd_count;
+
+/* Capability probe: a mouse has EV_REL axes and at least BTN_LEFT. */
+static int is_mouse_device(int fd) {
+  unsigned char rel[(REL_MAX / 8) + 1] = {0};
+  unsigned char key[(KEY_MAX / 8) + 1] = {0};
+  if (ioctl(fd, EVIOCGBIT(EV_REL, sizeof(rel)), rel) < 0) return 0;
+  if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key)), key) < 0) return 0;
+  if (!(rel[REL_X / 8] & (1 << (REL_X % 8)))) return 0;
+  return (key[BTN_LEFT / 8] & (1 << (BTN_LEFT % 8))) != 0;
+}
+
+static int is_keyboard_device(int fd) {
+  unsigned char key[(KEY_MAX / 8) + 1] = {0};
+  if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key)), key) < 0) return 0;
+  return (key[KEY_A / 8] & (1 << (KEY_A % 8))) != 0;
+}
+
+static int mod_key_bit(unsigned int code) {
+  switch (code) {
+    case KEY_LEFTCTRL: case KEY_RIGHTCTRL: return MOD_CTRL;
+    case KEY_LEFTALT: case KEY_RIGHTALT: return MOD_ALT;
+    case KEY_LEFTSHIFT: case KEY_RIGHTSHIFT: return MOD_SHIFT;
+    case KEY_LEFTMETA: case KEY_RIGHTMETA: return MOD_SUPER;
+    default: return 0;
+  }
+}
+
+static int btn_code_for_vk(int vk) {
+  switch (vk) {
+    case VK_RIGHT: return BTN_RIGHT;
+    case VK_MIDDLE: return BTN_MIDDLE;
+    case VK_X1: return BTN_SIDE;
+    case VK_X2: return BTN_EXTRA;
+    default: return BTN_MIDDLE;
+  }
+}
+
+static int vk_for_btn_code(unsigned int code) {
+  switch (code) {
+    case BTN_RIGHT: return VK_RIGHT;
+    case BTN_MIDDLE: return VK_MIDDLE;
+    case BTN_SIDE: return VK_X1;
+    case BTN_EXTRA: return VK_X2;
+    default: return 0;
+  }
+}
+
+static const char *record_name_for_vk(int vk) {
+  switch (vk) {
+    case VK_MIDDLE: return "Middle";
+    case VK_X1: return "Mouse4";
+    case VK_X2: return "Mouse5";
+    default: return "RightClick";
+  }
+}
+
+static long long evdev_now_ms(void) { return now_ms(); }
+
+static void write_event(int fd, unsigned short type, unsigned short code, int value) {
+  struct input_event ev;
+  memset(&ev, 0, sizeof(ev));
+  gettimeofday(&ev.time, NULL);
+  ev.type = type;
+  ev.code = code;
+  ev.value = value;
+  if (write(fd, &ev, sizeof(ev)) < 0) { /* device gone; hotplug cleanup will handle it */ }
+}
+
+static void emit_uinput(struct ev_source *src, unsigned short type, unsigned short code, int value) {
+  if (!src || src->ui_fd < 0) return;
+  write_event(src->ui_fd, type, code, value);
+}
+
+static void emit_syn(struct ev_source *src) {
+  emit_uinput(src, EV_SYN, SYN_REPORT, 0);
+}
+
+static void inject_button(struct ev_source *src, unsigned int code, int value) {
+  emit_uinput(src, EV_KEY, code, value);
+  emit_syn(src);
+}
+
+/* Copy the full capability set and identity so libinput applies the same hwdb/DPI rules —
+ * skipping this makes forwarded pointers "feel wrong" (input-remapper PR #1290). */
+static int create_forwarding_device(int src_fd, const char *src_name) {
+  unsigned char ev_bits[(EV_MAX / 8) + 1] = {0};
+  unsigned char key_bits[(KEY_MAX / 8) + 1] = {0};
+  unsigned char rel_bits[(REL_MAX / 8) + 1] = {0};
+  unsigned char msc_bits[(MSC_MAX / 8) + 1] = {0};
+  unsigned char prop_bits[(INPUT_PROP_MAX / 8) + 1] = {0};
+  struct uinput_user_dev ui;
+  int fd;
+
+  if (ioctl(src_fd, EVIOCGBIT(0, sizeof(ev_bits)), ev_bits) < 0) return -1;
+  ioctl(src_fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits);
+  ioctl(src_fd, EVIOCGBIT(EV_REL, sizeof(rel_bits)), rel_bits);
+  ioctl(src_fd, EVIOCGBIT(EV_MSC, sizeof(msc_bits)), msc_bits);
+  ioctl(src_fd, EVIOCGPROP(sizeof(prop_bits)), prop_bits);
+
+  fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
+  if (fd < 0) {
+    fprintf(stderr, "rovyl-helper-linux: cannot open /dev/uinput (%s); "
+            "add the user to the `input` group or install the packaged udev rule\n", strerror(errno));
+    return -1;
+  }
+
+  ioctl(fd, UI_SET_EVBIT, EV_SYN);
+  for (int bit = 0; bit <= EV_MAX; bit++) {
+    if (!(ev_bits[bit / 8] & (1 << (bit % 8))) || bit == EV_SYN) continue;
+    ioctl(fd, UI_SET_EVBIT, bit);
+  }
+  for (int bit = 0; bit <= KEY_MAX; bit++) {
+    if (key_bits[bit / 8] & (1 << (bit % 8))) ioctl(fd, UI_SET_KEYBIT, bit);
+  }
+  for (int bit = 0; bit <= REL_MAX; bit++) {
+    if (rel_bits[bit / 8] & (1 << (bit % 8))) ioctl(fd, UI_SET_RELBIT, bit);
+  }
+  for (int bit = 0; bit <= MSC_MAX; bit++) {
+    if (msc_bits[bit / 8] & (1 << (bit % 8))) ioctl(fd, UI_SET_MSCBIT, bit);
+  }
+  for (int bit = 0; bit <= INPUT_PROP_MAX; bit++) {
+    if (prop_bits[bit / 8] & (1 << (bit % 8))) ioctl(fd, UI_SET_PROPBIT, bit);
+  }
+
+  memset(&ui, 0, sizeof(ui));
+  snprintf(ui.name, UINPUT_MAX_NAME_SIZE, NAME_PREFIX "%s", src_name);
+  ioctl(src_fd, EVIOCGID, &ui.id);
+  if (write(fd, &ui, sizeof(ui)) < 0 || ioctl(fd, UI_DEV_CREATE) < 0) {
+    fprintf(stderr, "rovyl-helper-linux: UI_DEV_CREATE failed: %s\n", strerror(errno));
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+static void drop_source_at(int i) {
+  /* close, then compact — nothing may be left with a negative fd for select()/FD_SET */
+  if (sources[i].ev_fd >= 0) {
+    ioctl(sources[i].ev_fd, EVIOCGRAB, 0);
+    close(sources[i].ev_fd);
+  }
+  if (sources[i].ui_fd >= 0) {
+    ioctl(sources[i].ui_fd, UI_DEV_DESTROY);
+    close(sources[i].ui_fd);
+  }
+  for (int j = i; j < source_count - 1; j++) sources[j] = sources[j + 1];
+  source_count--;
+  sources[source_count] = (struct ev_source){-1, -1, "", ""};
+}
+
+/* `name_filter` scopes grabbing for tests and CI: only mice whose name contains it. */
+static void scan_input_devices(const char *name_filter) {
+  DIR *dir = opendir("/dev/input");
+  if (!dir) return;
+  struct dirent *de;
+  while ((de = readdir(dir)) != NULL) {
+    if (strncmp(de->d_name, "event", 5) != 0) continue;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "/dev/input/%s", de->d_name);
+    int fd = open(path, O_RDWR | O_NONBLOCK);
+    if (fd < 0) {
+      fd = open(path, O_RDONLY | O_NONBLOCK);
+      if (fd < 0) continue;
+    }
+    char name[96] = "";
+    ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
+    if (strncmp(name, NAME_PREFIX, strlen(NAME_PREFIX)) == 0) { close(fd); continue; }
+
+    if (is_mouse_device(fd)) {
+      if (source_count >= MAX_DEVICES) { close(fd); continue; }
+      if (name_filter && (!name[0] || !strstr(name, name_filter))) { close(fd); continue; }
+      /* already ours from an earlier scan: the node is still held, EVIOCGRAB would just EBUSY */
+      int held = 0;
+      for (int k = 0; k < source_count; k++) {
+        if (strcmp(sources[k].devnode, de->d_name) == 0) { held = 1; break; }
+      }
+      if (held) { close(fd); continue; }
+      if (ioctl(fd, EVIOCGRAB, 1) < 0) {
+        fprintf(stderr, "rovyl-helper-linux: EVIOCGRAB %s failed: %s (another grabber owns it?)\n",
+                name, strerror(errno));
+        close(fd);
+        continue;
+      }
+      int ui = create_forwarding_device(fd, name);
+      if (ui < 0) {
+        ioctl(fd, EVIOCGRAB, 0);
+        close(fd);
+        continue;
+      }
+      sources[source_count].ev_fd = fd;
+      sources[source_count].ui_fd = ui;
+      snprintf(sources[source_count].name, sizeof(sources[source_count].name), "%s", name);
+      snprintf(sources[source_count].devnode, sizeof(sources[source_count].devnode), "%s", de->d_name);
+      source_count++;
+    } else if (is_keyboard_device(fd)) {
+      if (kbd_count >= MAX_DEVICES) { close(fd); continue; }
+      /* observers, not grabbers: keyboards keep working normally, we just watch modifiers */
+      kbd_fds[kbd_count++] = fd;
+    } else {
+      close(fd);
+    }
+  }
+  closedir(dir);
+}
+
+static void rescan_input_devices(const char *name_filter) {
+  /* poll tells us which nodes are really gone: POLLERR/POLLHUP on removal, and it never
+   * false-positives the way a zero-length read probe would */
+  for (int i = source_count - 1; i >= 0; i--) {
+    struct pollfd p = {sources[i].ev_fd, POLLERR | POLLHUP, 0};
+    if (poll(&p, 1, 0) > 0 && (p.revents & (POLLERR | POLLHUP))) drop_source_at(i);
+  }
+  for (int i = kbd_count - 1; i >= 0; i--) {
+    struct pollfd p = {kbd_fds[i], POLLERR | POLLHUP, 0};
+    if (poll(&p, 1, 0) > 0 && (p.revents & (POLLERR | POLLHUP))) {
+      close(kbd_fds[i]);
+      kbd_fds[i] = kbd_fds[--kbd_count];
+    }
+  }
+  scan_input_devices(name_filter);
+}
+
+/* ---------------------------------------------------------------- evdev gesture state */
+
+static int ev_trigger_vk;                 /* 0 = off */
+static int ev_trigger_hold_mode;
+static int ev_trigger_threshold;
+static int ev_click_hold_ms = DEFAULT_CLICK_HOLD_MS;
+static int ev_click_drag_px = DEFAULT_CLICK_DRAG_PX;
+
+static int ev_trigger_held;
+static struct ev_source *ev_trigger_src;
+static int ev_click_press_armed, ev_click_injected;
+static long long ev_down_at;
+static long long ev_gesture_dx, ev_gesture_dy;
+
+static volatile int ev_blocking;
+static int ev_block_l, ev_block_t, ev_block_r, ev_block_b;
+static int ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b;
+static int ev_last_x = -1, ev_last_y = -1;
+
+static volatile int ev_record_mode;
+static int ev_shortcut_vk, ev_shortcut_mod_mask, ev_shortcut_active;
+static int ev_mod_mask;
+
+static int ev_point_in(int x, int y, int l, int t, int r, int b) {
+  return x >= l && x < r && y >= t && y < b;
+}
+
+static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
+  int vk = vk_for_btn_code(code);
+  int press = value != 0; /* 2 = repeat: treat as held */
+
+  if (ev_shortcut_vk && vk == ev_shortcut_vk) {
+    if (press) {
+      if (ev_mod_mask == ev_shortcut_mod_mask && !ev_shortcut_active) {
+        ev_shortcut_active = 1;
+        emit("SHORTCUT_DOWN");
+        return; /* swallow */
+      }
+    } else if (ev_shortcut_active) {
+      ev_shortcut_active = 0;
+      emit("SHORTCUT_UP");
+      return; /* swallow */
+    }
+    inject_button(src, code, value);
+    return;
+  }
+
+  if (ev_record_mode && (vk == VK_MIDDLE || vk == VK_X1 || vk == VK_X2 || vk == VK_RIGHT)) {
+    if (vk == VK_RIGHT && ev_mod_mask == 0) {
+      /* not a recording candidate without modifiers: the whole click passes through */
+      inject_button(src, code, value);
+      return;
+    }
+    if (press) {
+      char line[64];
+      snprintf(line, sizeof(line), "RECORD_MOUSE %s %d", record_name_for_vk(vk), ev_mod_mask);
+      emit(line);
+    }
+    return; /* recording candidate: swallow press and release */
+  }
+
+  if (ev_trigger_vk && vk == ev_trigger_vk) {
+    if (press && !ev_trigger_held) {
+      ev_trigger_held = 1;
+      ev_trigger_src = src;
+      ev_down_at = evdev_now_ms();
+      ev_gesture_dx = ev_gesture_dy = 0;
+      ev_click_press_armed = !ev_trigger_hold_mode;
+      ev_click_injected = 0;
+      emit("TRIGGER_DOWN");
+      return; /* swallow the physical press */
+    }
+    if (!press && ev_trigger_held && src == ev_trigger_src) {
+      ev_trigger_held = 0;
+      ev_trigger_src = NULL;
+      long long held = evdev_now_ms() - ev_down_at;
+      long long dist2 = ev_gesture_dx * ev_gesture_dx + ev_gesture_dy * ev_gesture_dy;
+      if (ev_trigger_hold_mode) {
+        emit("TRIGGER_UP");
+        if (held <= PASSTHROUGH_MAX_MS &&
+            (long long)ev_trigger_threshold * ev_trigger_threshold >= dist2) {
+          inject_button(src, code, 1);
+          inject_button(src, code, 0);
+        }
+        return;
+      }
+      if (ev_click_injected) {
+        inject_button(src, code, 0);
+        emit("TRIGGER_HOLD");
+      } else if (!ev_click_press_armed || held >= ev_click_hold_ms ||
+                 dist2 >= (long long)ev_click_drag_px * ev_click_drag_px) {
+        emit("TRIGGER_HOLD");
+      } else {
+        emit("TRIGGER_UP");
+        inject_button(src, code, 1);
+        inject_button(src, code, 0);
+      }
+      return;
+    }
+    /* release for a gesture we didn't start, or a repeat: forward */
+    inject_button(src, code, value);
+    return;
+  }
+
+  if (ev_blocking) {
+    int inside_allowed = ev_point_in(ev_last_x, ev_last_y, ev_block_l, ev_block_t, ev_block_r, ev_block_b);
+    int inside_monitor = ev_point_in(ev_last_x, ev_last_y, ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b);
+    if (inside_monitor && !inside_allowed) return; /* swallow */
+  }
+
+  inject_button(src, code, value);
+}
+
+static void ev_handle_rel(struct ev_source *src, unsigned int code, int value) {
+  if (ev_trigger_held) {
+    if (code == REL_X) ev_gesture_dx += value;
+    else if (code == REL_Y) ev_gesture_dy += value;
+  }
+  if (ev_blocking && (code == REL_WHEEL || code == REL_HWHEEL || code == REL_WHEEL_HI_RES ||
+                      code == REL_HWHEEL_HI_RES)) {
+    int inside_allowed = ev_point_in(ev_last_x, ev_last_y, ev_block_l, ev_block_t, ev_block_r, ev_block_b);
+    int inside_monitor = ev_point_in(ev_last_x, ev_last_y, ev_mon_l, ev_mon_t, ev_mon_r, ev_mon_b);
+    if (inside_monitor && !inside_allowed) return; /* swallow scroll outside the wheel */
+  }
+  inject_button(src, code, value);
+}
+
+/* Click mode hands the button over mid-hold: too long or too drags, the app gets its press. */
+static void ev_poll_click_hold(void) {
+  static long long next_check;
+  if (!ev_trigger_vk || ev_trigger_hold_mode || !ev_click_press_armed || ev_click_injected) return;
+  long long now = evdev_now_ms();
+  if (now < next_check) return;
+  next_check = now + 15;
+  long long pressed = now - ev_down_at;
+  long long dist2 = ev_gesture_dx * ev_gesture_dx + ev_gesture_dy * ev_gesture_dy;
+  if (pressed < 0 || pressed >= ev_click_hold_ms ||
+      dist2 >= (long long)ev_click_drag_px * ev_click_drag_px) {
+    ev_click_injected = 1;
+    inject_button(ev_trigger_src, btn_code_for_vk(ev_trigger_vk), 1);
+  }
+}
+
+static void ev_apply_command(char *line) {
+  char *save = NULL;
+  char *parts[10] = {0};
+  int n = 0;
+  for (char *p = strtok_r(line, " ", &save); p && n < 10; p = strtok_r(NULL, " ", &save)) {
+    parts[n++] = p;
+  }
+  if (n == 0) return;
+
+  if (strcmp(parts[0], "BLOCK") == 0 && n == 9) {
+    int x = atoi(parts[1]), y = atoi(parts[2]), w = atoi(parts[3]), h = atoi(parts[4]);
+    int mx = atoi(parts[5]), my = atoi(parts[6]), mw = atoi(parts[7]), mh = atoi(parts[8]);
+    ev_block_l = x; ev_block_t = y; ev_block_r = x + w; ev_block_b = y + h;
+    ev_mon_l = mx; ev_mon_t = my; ev_mon_r = mx + mw; ev_mon_b = my + mh;
+    ev_blocking = 1;
+  } else if (strcmp(parts[0], "UNBLOCK") == 0) {
+    ev_blocking = 0;
+  } else if (strcmp(parts[0], "POS") == 0 && n == 3) {
+    ev_last_x = atoi(parts[1]);
+    ev_last_y = atoi(parts[2]);
+
+  } else if (strcmp(parts[0], "TRIGGER") == 0) {
+    if (ev_click_injected && ev_trigger_src) {
+      inject_button(ev_trigger_src, btn_code_for_vk(ev_trigger_vk), 0);
+    }
+    ev_click_injected = 0;
+    ev_click_press_armed = 0;
+    ev_trigger_held = 0;
+    ev_trigger_src = NULL;
+    if (n >= 2 && strcmp(parts[1], "OFF") == 0) {
+      ev_trigger_vk = 0;
+      emit("TRIGGER_OFF");
+      return;
+    }
+    if (n >= 4 && n <= 6) {
+      int vk = atoi(parts[1]);
+      int threshold = atoi(parts[3]);
+      if (vk != VK_MIDDLE && vk != VK_X1 && vk != VK_X2) vk = VK_MIDDLE;
+      ev_trigger_hold_mode = strcmp(parts[2], "click") != 0;
+      ev_trigger_threshold = threshold > 0 ? threshold : 0;
+      ev_click_hold_ms = n >= 5 && atoi(parts[4]) > 0 ? atoi(parts[4]) : DEFAULT_CLICK_HOLD_MS;
+      ev_click_drag_px = n >= 6 && atoi(parts[5]) > 0 ? atoi(parts[5]) : DEFAULT_CLICK_DRAG_PX;
+      ev_trigger_vk = vk;
+      emit(source_count > 0 ? "TRIGGER_READY" : "TRIGGER_FAILED");
+    }
+  } else if (strcmp(parts[0], "RECORD") == 0) {
+    ev_record_mode = (n >= 2 && strcmp(parts[1], "ON") == 0);
+    emit(ev_record_mode ? "RECORD_READY" : "RECORD_OFF");
+  } else if (strcmp(parts[0], "SHORTCUT_TRIGGER") == 0) {
+    if (n >= 2 && strcmp(parts[1], "OFF") == 0) {
+      ev_shortcut_vk = 0;
+      ev_shortcut_mod_mask = 0;
+      ev_shortcut_active = 0;
+      emit("SHORTCUT_TRIGGER_OFF");
+      return;
+    }
+    if (n >= 3) {
+      ev_shortcut_vk = atoi(parts[1]);
+      ev_shortcut_mod_mask = atoi(parts[2]);
+      ev_shortcut_active = 0;
+      emit("SHORTCUT_TRIGGER_READY");
+    }
+  } else if (strcmp(parts[0], "WARP") == 0) {
+    fprintf(stderr, "rovyl-helper-linux: WARP unsupported on native Wayland (no warp protocol)\n");
+  } else if (strcmp(parts[0], "EXIT") == 0) {
+    exit(0);
+  }
+}
+
+static int ev_stdin_line(char *buf, size_t cap) {
+  size_t len = 0;
+  for (;;) {
+    char c;
+    ssize_t got = read(0, &c, 1);
+    if (got <= 0) return -1;
+    if (c == '\n') break;
+    if (len + 1 < cap) buf[len++] = c;
+  }
+  buf[len] = '\0';
+  char *s = buf;
+  while (*s == ' ' || *s == '\t' || *s == '\r') s++;
+  if (*s) ev_apply_command(s);
+  return 0;
+}
+
+static void run_mouse_blocker_evdev(const char *name_filter) {
+  for (int i = 0; i < MAX_DEVICES; i++) sources[i] = (struct ev_source){-1, -1, "", ""};
+  scan_input_devices(name_filter);
+  emit("READY");
+  if (source_count == 0) {
+    if (name_filter) {
+      fprintf(stderr, "rovyl-helper-linux: no grabbable mouse devices found matching '%s'; "
+              "gesture capture will not fire (input group membership required)\n", name_filter);
+    } else {
+      fprintf(stderr, "rovyl-helper-linux: no grabbable mouse devices found; "
+              "gesture capture will not fire (input group membership required)\n");
+    }
+  }
+
+  char buf[256];
+  for (;;) {
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(0, &fds);
+    int maxfd = 0;
+    for (int i = 0; i < source_count; i++) {
+      FD_SET(sources[i].ev_fd, &fds);
+      if (sources[i].ev_fd > maxfd) maxfd = sources[i].ev_fd;
+    }
+    for (int i = 0; i < kbd_count; i++) {
+      FD_SET(kbd_fds[i], &fds);
+      if (kbd_fds[i] > maxfd) maxfd = kbd_fds[i];
+    }
+    /*
+     * Hotplug = a rescan every second. inotify on /dev/input looked like the right tool, but
+     * uinput node creation does not raise IN_CREATE on every kernel, and the devices also
+     * appear before they are readable — a periodic poll is simple and never misses.
+     */
+    struct timeval tv = {1, 0}, *tvp = &tv;
+    if (ev_trigger_held && !ev_trigger_hold_mode) { tv.tv_sec = 0; tv.tv_usec = 15000; }
+    int ready = select(maxfd + 1, &fds, NULL, NULL, tvp);
+    if (ready < 0 && errno != EINTR) break;
+
+    if (ready > 0 && FD_ISSET(0, &fds)) {
+      if (ev_stdin_line(buf, sizeof(buf)) < 0) break; /* parent died */
+    }
+    for (int i = source_count - 1; i >= 0; i--) {
+      if (ready > 0 && FD_ISSET(sources[i].ev_fd, &fds)) {
+        struct input_event evs[64];
+        ssize_t got;
+        int dead = 0;
+        while ((got = read(sources[i].ev_fd, evs, sizeof(evs))) > (ssize_t)0) {
+          for (size_t k = 0; k < (size_t)got / sizeof(evs[0]); k++) {
+            unsigned short type = evs[k].type;
+            if (type == EV_KEY) {
+              ev_handle_key(&sources[i], evs[k].code, evs[k].value);
+            } else if (type == EV_REL) {
+              ev_handle_rel(&sources[i], evs[k].code, evs[k].value);
+            } else if (type == EV_SYN) {
+              emit_syn(&sources[i]);
+            } else {
+              emit_uinput(&sources[i], type, evs[k].code, evs[k].value);
+            }
+          }
+        }
+        if (got == 0 || (got < 0 && errno != EAGAIN && errno != EINTR)) dead = 1;
+        if (dead) drop_source_at(i);
+      }
+    }
+    for (int i = 0; i < kbd_count; i++) {
+      if (ready > 0 && FD_ISSET(kbd_fds[i], &fds)) {
+        struct input_event evs[64];
+        ssize_t got;
+        while ((got = read(kbd_fds[i], evs, sizeof(evs))) > (ssize_t)0) {
+          for (size_t k = 0; k < (size_t)got / sizeof(evs[0]); k++) {
+            if (evs[k].type == EV_KEY) {
+              int bit = mod_key_bit(evs[k].code);
+              if (bit) {
+                if (evs[k].value != 0) ev_mod_mask |= bit;
+                else ev_mod_mask &= ~bit;
+              }
+            }
+          }
+        }
+        if (got == 0 || (got < 0 && errno != EAGAIN)) {
+          close(kbd_fds[i]);
+          kbd_fds[i] = kbd_fds[--kbd_count];
+        }
+      }
+    }
+    if (ready == 0) {
+      rescan_input_devices(name_filter);
+    }
+    ev_poll_click_hold();
+  }
+
+  for (int i = source_count - 1; i >= 0; i--) drop_source_at(i);
+  for (int i = 0; i < kbd_count; i++) close(kbd_fds[i]);
+}
+
 /* ---------------------------------------------------------------- entry */
 
 int main(int argc, char **argv) {
@@ -693,6 +1271,12 @@ int main(int argc, char **argv) {
     xfd = ConnectionNumber(dpy);
     /* stdin EOF doubles as the parent-death watch; the pid argument is kept for parity. */
     run_mouse_blocker();
+    return 0;
+  }
+
+  if (argc > 1 && strcmp(argv[1], "mouse-blocker-evdev") == 0) {
+    /* argv[3] is a dev-only device-name filter: grab only matching mice (tests, CI). */
+    run_mouse_blocker_evdev(argc > 3 ? argv[3] : NULL);
     return 0;
   }
 
