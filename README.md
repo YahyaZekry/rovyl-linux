@@ -106,7 +106,7 @@ Requires **Node 20+** and, on Linux, `build-essential libx11-dev libxtst-dev` (t
 gesture helper compiles as part of the build).
 
 ```bash
-git clone https://github.com/YahyaZekry/rovyl
+git clone https://github.com/YahyaZekry/rovyl-linux
 cd rovyl
 npm install
 npm run dist      # AppImage + deb in build-out/

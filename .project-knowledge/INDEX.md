@@ -1,6 +1,6 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-09-21 (calibration rework + double-click option, README refresh)
+> Last updated: 2026-09-21 (pushed; repo config moved to rovyl-linux)
 > Status: Active
 > Stack: Electron 44.3.0 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
 > Current goal: port complete and user-verified; remaining: repo-rename config, deb udev/postinst polish, Windows regression pass

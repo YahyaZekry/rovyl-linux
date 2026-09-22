@@ -9,8 +9,7 @@ The Linux/Wayland port is done and user-verified (wheel, launches, autoscroll, h
 click-away, autostart, two-sided calibration, double-click option). Remaining work is
 polish and release mechanics:
 
-1. **Repo rename** — the GitHub repo is going Linux-only; when renamed, update
-   `build.publish` / `repository` in package.json and any hardcoded repo URLs.
+1. ~~**Repo rename**~~ — **done 2026-09-21**: remote, package.json repository/publish, and the README clone URL now point at YahyaZekry/rovyl-linux (the C# Windows-side `build.win` config still builds; only its publish target was shared).
 2. **deb polish** — udev rule + `input` group membership in postinst (currently manual).
 3. **Windows regression pass** — the 7-arg TRIGGER silently broke trigger capture there
    (C# parsers cap at 6 fields) and is now platform-branched (5 args on win32), but the
@@ -36,7 +35,7 @@ parsing in main, Windows TRIGGER branch fix. E2E scenarios A–J green.
 
 ## Active TODOs
 
-- [ ] Repo-rename follow-ups (build.publish/repository, hardcoded URLs) when the GitHub repo is renamed *(added: 2026-09-19)*
+- [x] Repo-rename follow-ups — done 2026-09-21 (remote URL, package.json repository/publish, README clone URL)
 - [ ] deb udev/postinst polish: ship the udev rule + input-group in the package scripts *(added: 2026-09-19)*
 - [ ] Windows regression pass (trigger capture, settings, launch) on a Windows box *(added: 2026-09-21)*
 - [ ] `helper:build:linux` npm script wrapping the gcc command *(added: 2026-09-21)*
