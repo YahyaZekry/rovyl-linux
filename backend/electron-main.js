@@ -199,6 +199,43 @@ const scheduleLogFlush = () => {
  * side buttons (X1/X2) are free in the overwhelming majority of applications.
  */
 const MOUSE_TRIGGER_VK = { middle: 0x04, x1: 0x05, x2: 0x06 };
+
+/** Accelerator → evdev key code + modifier mask for the helper's passive hotkey watch. */
+function acceleratorToEvdevCode(accelerator) {
+  const key = String(accelerator || "")
+    .split("+")
+    .pop()
+    .trim()
+    .toUpperCase();
+  /**
+   * Evdev key codes follow the QWERTY keyboard scan order, NOT ASCII: A..L are 30..38,
+   * Z..M are 44..50, Q..P are 16..25, digits 1..0 are 2..11, F1..F10 are 59..68.
+   * A plain charCode formula watches the wrong key for every letter but A.
+   */
+  const LETTERS = {
+    Q: 16, W: 17, E: 18, R: 19, T: 20, Y: 21, U: 22, I: 23, O: 24, P: 25,
+    A: 30, S: 31, D: 32, F: 33, G: 34, H: 35, J: 36, K: 37, L: 38,
+    Z: 44, X: 45, C: 46, V: 47, B: 48, N: 49, M: 50,
+  };
+  if (LETTERS[key] !== undefined) return LETTERS[key];
+  if (/^[0-9]$/.test(key)) return key === "0" ? 11 : 1 + parseInt(key, 10);
+  if (/^F([1-9]|1[0-2])$/.test(key)) {
+    const n = parseInt(key.slice(1), 10);
+    return n <= 10 ? 58 + n : n === 11 ? 87 : 88;
+  }
+  return 0;
+}
+function acceleratorToModMask(accelerator) {
+  let mask = 0;
+  for (const part of String(accelerator || "").split("+")) {
+    const p = part.trim().toLowerCase();
+    if (p === "control" || p === "ctrl") mask |= 1;
+    else if (p === "alt" || p === "option") mask |= 2;
+    else if (p === "shift") mask |= 4;
+    else if (p === "super" || p === "meta" || p === "win") mask |= 8;
+  }
+  return mask;
+}
 const MOUSE_TRIGGER_BUTTONS = Object.keys(MOUSE_TRIGGER_VK);
 
 /**
@@ -1859,11 +1896,23 @@ function collapseOverlayToIdle(anchorScreenPoint) {
   /** Nobody is reading the dock with no wheel on screen: the poll stops until the next open. */
   systemStatus.setWatching(false);
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  /** The block MUST die here: upstream's close never knew about it, and a missed UNBLOCK is a
+   * dead mouse. This is the only path the wheel takes back to idle. */
+  clearRadialMouseBlocking();
   try {
     overlayWindow.setIgnoreMouseEvents(true);
     applyOverlayIdleBounds(anchorScreenPoint);
     overlayWindow.setAlwaysOnTop(true, "screen-saver", 1);
-    if (!overlayWindow.isVisible()) overlayWindow.showInactive();
+    /**
+     * Wayland ignores `setIgnoreMouseEvents` — a visible idle overlay would be an invisible
+     * input shield over the desktop, and would also keep a taskbar entry (no skip-taskbar
+     * protocol there). Hidden windows have neither problem; the open path shows it again.
+     */
+    if (isWaylandNative) {
+      if (overlayWindow.isVisible()) overlayWindow.hide();
+    } else {
+      if (!overlayWindow.isVisible()) overlayWindow.showInactive();
+    }
     overlayWindow.webContents.setBackgroundThrottling(true);
   } catch (e) {
     /* ignore */
@@ -2055,10 +2104,15 @@ function sendToOverlay(channel, payload) {
  * around it, the taskbar screen, the parked cursor, and the `clientPosition` the renderer draws at.
  */
 function showMenuAtCursor(source = "shortcut") {
-  void ensureOverlayWindow().then((win) => {
+  void ensureOverlayWindow().then(async (win) => {
     if (!win || win.isDestroyed()) return;
     cancelIdleMemoryCleanup();
     const radialOpenStartedAt = Date.now();
+    /** Wayland: the only cursor source is the helper's tracked position. */
+    if (isWaylandNative) {
+      const p = await queryWaylandCursor();
+      if (p) waylandCursorPoint = p;
+    }
 
     /**
      * One reading of the pointer, used for both answers. Asking twice would let the hand move
@@ -2437,6 +2491,10 @@ let pendingRadialMouseBlockCommand = null;
 let radialTriggerListener = null;
 /** Set by the trigger owner once the hook exists: respawns a dead helper and re-arms the capture. */
 let requestBlockerRespawn = null;
+/** Set by the shortcut owner: opens the wheel from the helper's HOTKEY_PRESSED (scope bridge). */
+let openRadialFromShortcutRef = null;
+/** Re-sends the current hotkey to a (fresh) helper; set once shortcut state exists. */
+let refreshHelperHotkey = null;
 
 /** Drag slop: below this the press was a click, not an aim. */
 const TRIGGER_PASSTHROUGH_SLOP_PX = 6;
@@ -2471,6 +2529,12 @@ const NATIVE_HELPER_BIN =
       : null;
 
 let cachedNativeHelperPath; // undefined = not probed yet
+
+/** Windows always has a helper (exe, with a PowerShell fallback). Linux has no fallback: the
+ * gesture layer exists only when the built binary is present. */
+function nativeHelperEnabled() {
+  return process.platform === "win32" || !!getNativeHelperExePath();
+}
 
 function isInsideAsarArchive(candidate) {
   return /\.asar([\\/]|$)/i.test(candidate) && !/\.asar\.unpacked/i.test(candidate);
@@ -2656,6 +2720,28 @@ function ensureRadialMouseBlocker() {
         } catch (e) {
           diagLog(`[RadialBlocker] record mouse: ${e.message}`);
         }
+      } else if (line === "HOTKEY_PRESSED") {
+        /**
+         * Module scope: `currentSettings` lives in the whenReady closure and is NOT visible
+         * here (that ReferenceError ate every hotkey press once). The shortcut owner's ref
+         * runs on the closure side, where the settings are.
+         */
+        try {
+          diagLog("[RadialBlocker] HOTKEY_PRESSED received from helper");
+          openRadialFromShortcutRef?.("hotkey");
+        } catch (e) {
+          diagLog(`[RadialBlocker] hotkey: ${e.message}`);
+        }
+      } else if (line.startsWith("CURSOR ")) {
+        const parts = line.slice(7).trim().split(" ");
+        const px = parseInt(parts[0], 10);
+        const py = parseInt(parts[1], 10);
+        if (Number.isFinite(px) && Number.isFinite(py)) {
+          waylandCursorPoint = { x: px, y: py };
+          const waiters = waylandCursorWaiters;
+          waylandCursorWaiters = null;
+          if (waiters) waiters.resolve({ x: px, y: py });
+        }
       } else if (line === "SHORTCUT_DOWN") {
         try {
           triggerRadialShortcut();
@@ -2682,6 +2768,8 @@ function ensureRadialMouseBlocker() {
     /** A line on its own: "TRIGGER_READY" also contains READY and does not announce the startup. */
     if (!/^READY\s*$/m.test(text)) return;
     radialMouseBlockerReady = true;
+    /** The hotkey watch dies with the helper process — re-arm it on every fresh one. */
+    if (isWaylandNative && typeof refreshHelperHotkey === "function") refreshHelperHotkey();
     if (pendingRadialMouseBlockCommand) {
       const command = pendingRadialMouseBlockCommand;
       pendingRadialMouseBlockCommand = null;
@@ -2772,6 +2860,35 @@ function waitForMouseButtonsUp(timeoutMs = 400) {
 let waylandBlockRect = null;
 /** Last renderer-reported cursor position (screen coords); re-sent as the watchdog heartbeat. */
 let lastWheelPos = null;
+/** Last helper-reported coarse position (CURSORQ answer); the follow-pointer source on Wayland. */
+let waylandCursorPoint = null;
+let waylandCursorWaiters = null;
+
+/**
+ * Ask the helper for its tracked cursor position. Acceleration drift makes this approximate —
+ * it is used for monitor choice and coarse placement, then the renderer's real motion takes over.
+ */
+function queryWaylandCursor() {
+  if (!isWaylandNative || !radialMouseBlocker || !radialMouseBlockerReady || !radialMouseBlocker.stdin?.writable) {
+    return Promise.resolve(waylandCursorPoint);
+  }
+  if (waylandCursorPoint) return Promise.resolve(waylandCursorPoint);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      waylandCursorWaiters = null;
+      resolve(waylandCursorPoint);
+    }, 150);
+    timer.unref?.();
+    waylandCursorWaiters = { resolve };
+    try {
+      radialMouseBlocker.stdin.write("CURSORQ\n");
+    } catch (e) {
+      clearTimeout(timer);
+      waylandCursorWaiters = null;
+      resolve(waylandCursorPoint);
+    }
+  });
+}
 
 function setRadialMouseBlocking(bounds, monitorBounds) {
   if (process.platform !== "win32" && process.platform !== "linux") return;
@@ -3854,6 +3971,9 @@ app.whenReady().then(async () => {
     if (typeof ui.enableKeyboardTrigger === "boolean") {
       currentSettings.enableKeyboardTrigger = ui.enableKeyboardTrigger;
     }
+    if (typeof ui.middleClickOpensMenu === "boolean") {
+      currentSettings.middleClickOpensMenu = ui.middleClickOpensMenu;
+    }
     if (typeof ui.enableMouseTrigger === "boolean") {
       currentSettings.enableMouseTrigger = ui.enableMouseTrigger;
     }
@@ -4306,6 +4426,9 @@ app.whenReady().then(async () => {
       }
       if (typeof ui.enableMouseTrigger === "boolean") {
         cachedRadialFlags.enableMouseTrigger = ui.enableMouseTrigger;
+      }
+      if (typeof ui.middleClickOpensMenu === "boolean") {
+        cachedRadialFlags.middleClickOpensMenu = ui.middleClickOpensMenu;
       }
       if (ui.mouseTriggerMode === "click" || ui.mouseTriggerMode === "hold") {
         cachedRadialFlags.mouseTriggerMode = ui.mouseTriggerMode;
@@ -5186,6 +5309,12 @@ app.whenReady().then(async () => {
     if (!tray || tray.isDestroyed()) return;
     try {
       tray.setToolTip(triggersArePaused() ? "Rovyl — trigger paused" : "Rovyl");
+      /**
+       * Linux StatusNotifier: the desktop shell owns the tray menu over D-Bus, and Electron's
+       * `right-click`/`click` events never fire there. The menu must be attached permanently and
+       * rebuilt on state changes — the Windows pop-up dance below never runs on this platform.
+       */
+      if (process.platform !== "win32") tray.setContextMenu(buildTrayMenu());
     } catch (e) {
       diagLog(`[Tray] refresh: ${e.message}`);
     }
@@ -5202,25 +5331,31 @@ app.whenReady().then(async () => {
     tray = new Tray(resizedIcon);
     tray.setToolTip("Rovyl");
 
-    /**
-     * No `setContextMenu`: that is what makes Electron emit `right-click` instead of popping the
-     * menu inside the button-down. See `popUpTrayMenu`.
-     */
-    tray.on("right-click", () => {
-      void popUpTrayMenu();
-    });
+    if (process.platform !== "win32") {
+      /** Linux: attach the menu over D-Bus (see `refreshTrayMenu`). */
+      tray.setContextMenu(buildTrayMenu());
+    } else {
+      /**
+       * No `setContextMenu`: that is what makes Electron emit `right-click` instead of popping
+       * the menu inside the button-down. See `popUpTrayMenu`. Windows only — Linux StatusNotifier
+       * trays never fire these events and would be left with no menu at all.
+       */
+      tray.on("right-click", () => {
+        void popUpTrayMenu();
+      });
 
-    /**
-     * On Windows a context menu does NOT swallow the left button — that constraint is macOS's.
-     * Both listeners below share one cooldown on purpose: whether a double-click really yields
-     * click+double-click or click+click, the outcome is the same.
-     */
-    tray.on("click", () => {
-      void openSettingsFromTray();
-    });
-    tray.on("double-click", () => {
-      void openSettingsFromTray();
-    });
+      /**
+       * On Windows a context menu does NOT swallow the left button — that constraint is macOS's.
+       * Both listeners below share one cooldown on purpose: whether a double-click really yields
+       * click+double-click or click+click, the outcome is the same.
+       */
+      tray.on("click", () => {
+        void openSettingsFromTray();
+      });
+      tray.on("double-click", () => {
+        void openSettingsFromTray();
+      });
+    }
 
     // Startup feedback
     console.log("Rovyl started successfully in the background.");
@@ -5325,6 +5460,7 @@ app.whenReady().then(async () => {
     lastShortcutRegistrationSignature = registrationSignature;
     globalShortcut.unregisterAll();
     let shortcut = currentSettings.globalShortcut || "Alt+Z";
+    openRadialFromShortcutRef = (source) => void openRadialFromShortcut(source);
     const openRadialFromShortcut = async (sourceShortcut) => {
       diagLog(`${sourceShortcut} shortcut triggered`);
       const isHoldMode = cachedRadialFlags.shortcutTriggerMode === "hold";
@@ -5399,6 +5535,14 @@ app.whenReady().then(async () => {
           const registered = globalShortcut.register(shortcut, () =>
             openRadialFromShortcut(shortcut),
           );
+
+          /** Wayland: globalShortcut has no compositor protocol to reach — the helper's
+           * passive keyboard watch is the one that actually fires. Keep the Electron
+           * registration for X11 sessions; on Wayland it just returns true and does nothing. */
+          if (isWaylandNative && currentSettings.enableKeyboardTrigger !== false) {
+            diagLog(`[Shortcut] arming helper hotkey watch (registration): ${shortcut}`);
+            writeRadialMouseBlocker(`HOTKEY ${acceleratorToEvdevCode(shortcut)} ${acceleratorToModMask(shortcut)}`);
+          }
 
           if (registered) {
             diagLog(`Global shortcut '${shortcut}' registered successfully.`);
@@ -5524,6 +5668,14 @@ app.whenReady().then(async () => {
 
   // Register initial shortcut
   registerGlobalShortcut();
+  /** Helper restarts re-read the current shortcut through this. */
+  refreshHelperHotkey = () => {
+    if (!isWaylandNative) return;
+    diagLog("[Shortcut] arming helper hotkey watch");
+    const disabled = currentSettings.enableKeyboardTrigger === false;
+    const shortcut = disabled ? "" : (currentSettings.globalShortcut || "Alt+Z");
+    writeRadialMouseBlocker(`HOTKEY ${disabled ? 0 : acceleratorToEvdevCode(shortcut)} ${disabled ? 0 : acceleratorToModMask(shortcut)}`);
+  };
 
   refreshShortcutsFromFullConfig = () => {
     registerGlobalShortcut();
@@ -6614,6 +6766,10 @@ app.whenReady().then(async () => {
              * eating the next gesture's release.
              */
             if (!allowed || mmbHoldGestureId !== gestureId) continue;
+            /**
+             * Click mode is both-fire (Windows parity): the helper already delivered the native
+             * middle click at release, and the menu opens on top of it. Click-away dismisses.
+             */
             showMenuAtCursor("mmb-click");
             continue;
           }
