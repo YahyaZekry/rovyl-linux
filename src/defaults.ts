@@ -396,6 +396,7 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   enableKeyboardTrigger: true,
   enableMouseTrigger: true,
   middleClickOpensMenu: true,
+  doubleClickOpensMenu: false,
   menuHoldMinMs: 350,
   mouseTriggerMode: 'click',
   mouseTriggerButton: 'middle',

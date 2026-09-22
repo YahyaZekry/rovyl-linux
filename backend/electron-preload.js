@@ -294,6 +294,29 @@ contextBridge.exposeInMainWorld("electron", {
   /** Opens http(s) URLs in the system default browser (not an Electron window). */
   openExternalUrl: (url) => ipcRenderer.invoke("open-external-url", url),
   openSystemUninstall: () => ipcRenderer.invoke("open-system-uninstall"),
+  /** Real display-server info (Wayland has no global cursor query) — see get-platform-info. */
+  isWaylandNative: () => ipcRenderer.invoke("get-platform-info"),
+  /** Pointer feed while the wheel is open on Wayland (the renderer cannot see the cursor). */
+  wheelCursor: (x, y) => ipcRenderer.send("wheel-cursor", x, y),
+  /** A click the gesture helper swallowed outside the wheel/panel — click away closes it. */
+  onBlockClick: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("block-click", listener);
+    return () => ipcRenderer.removeListener("block-click", listener);
+  },
+  /** Middle-click calibration: main times real middle presses and streams them. */
+  calibrationStart: () => ipcRenderer.send("start-middle-click-calibration"),
+  calibrationCancel: () => ipcRenderer.send("cancel-middle-click-calibration"),
+  onCalibrationStarted: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("calibration-started", listener);
+    return () => ipcRenderer.removeListener("calibration-started", listener);
+  },
+  onCalibrationSample: (callback) => {
+    const listener = (event, ms) => callback(ms);
+    ipcRenderer.on("calibration-sample", listener);
+    return () => ipcRenderer.removeListener("calibration-sample", listener);
+  },
 });
 
 // Intercept console messages from the renderer process and send them to the main process

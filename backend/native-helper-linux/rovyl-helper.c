@@ -421,7 +421,7 @@ static void apply_command(char *line) {
       emit("TRIGGER_OFF");
       return;
     }
-    if (n >= 4 && n <= 7) {
+    if (n >= 4 && n <= 8) {
       int vk = atoi(parts[1]);
       int threshold = atoi(parts[3]);
       if (vk != VK_MIDDLE && vk != VK_X1 && vk != VK_X2) vk = VK_MIDDLE;
@@ -956,6 +956,8 @@ static int ev_trigger_threshold;
 static int ev_click_hold_ms = DEFAULT_CLICK_HOLD_MS;
 static int ev_click_drag_px = DEFAULT_CLICK_DRAG_PX;
 static int ev_menu_min_ms;            /* releases at/after this open the menu (0 = never) */
+static int ev_dbl_ms;                 /* double-click watch window (0 = off) */
+static int ev_gesture_double;         /* current gesture is the 2nd press of a double */
 
 static int ev_trigger_held;
 static struct ev_source *ev_trigger_src;
@@ -1046,6 +1048,14 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
 
   if (ev_trigger_vk && vk == ev_trigger_vk) {
     if (press && !ev_trigger_held) {
+      if (!ev_trigger_hold_mode && ev_dbl_ms > 0 && ev_pending_passthrough) {
+        /** Second press inside the double-click window: the first click of the pair is
+         * cancelled and the pair becomes a menu gesture (main suppresses this release). */
+        ev_gesture_double = 1;
+        emit("TRIGGER_DOUBLE");
+      } else {
+        ev_gesture_double = 0;
+      }
       ev_pending_passthrough = 0; /* a new gesture supersedes a held-back click */
       ev_trigger_held = 1;
       ev_trigger_src = src;
@@ -1070,6 +1080,13 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
         }
         return;
       }
+      if (ev_gesture_double) {
+        /** Second press of a double: main opened the menu on TRIGGER_DOUBLE and suppresses
+         * this release. Nothing native may land — no passthrough, no autoscroll injection. */
+        ev_gesture_double = 0;
+        emit("TRIGGER_UP");
+        return;
+      }
       if (ev_click_injected) {
         inject_button(src, code, 0);
         emit("TRIGGER_HOLD");
@@ -1084,6 +1101,14 @@ static void ev_handle_key(struct ev_source *src, unsigned int code, int value) {
         ev_pending_src = src;
         ev_pending_btn = code;
         ev_pending_at = evdev_now_ms() + PASSTHROUGH_DELAY_MS;
+      } else if (ev_dbl_ms > 0) {
+        /** Fast release, double-click watch on: hold the click briefly. A second press inside
+         * the window turns the pair into TRIGGER_DOUBLE; otherwise the click lands as usual. */
+        emit("TRIGGER_UP");
+        ev_pending_passthrough = 1;
+        ev_pending_src = src;
+        ev_pending_btn = code;
+        ev_pending_at = evdev_now_ms() + ev_dbl_ms;
       } else {
         /** Faster than the menu threshold: pure native click, no menu involved. */
         emit("TRIGGER_UP");
@@ -1133,6 +1158,7 @@ static void ev_handle_rel(struct ev_source *src, unsigned int code, int value) {
 static void ev_poll_click_hold(void) {
   static long long next_check;
   if (!ev_trigger_vk || ev_trigger_hold_mode || !ev_click_press_armed || ev_click_injected) return;
+  if (ev_gesture_double) return; /* the pair is a menu gesture: injecting here would strand the button down */
   long long now = evdev_now_ms();
   if (now < next_check) return;
   next_check = now + 15;
@@ -1189,12 +1215,13 @@ static void ev_apply_command(char *line) {
     ev_click_press_armed = 0;
     ev_trigger_held = 0;
     ev_trigger_src = NULL;
+    ev_gesture_double = 0;
     if (n >= 2 && strcmp(parts[1], "OFF") == 0) {
       ev_trigger_vk = 0;
       emit("TRIGGER_OFF");
       return;
     }
-    if (n >= 4 && n <= 7) {
+    if (n >= 4 && n <= 8) {
       int vk = atoi(parts[1]);
       int threshold = atoi(parts[3]);
       if (vk != VK_MIDDLE && vk != VK_X1 && vk != VK_X2) vk = VK_MIDDLE;
@@ -1203,6 +1230,7 @@ static void ev_apply_command(char *line) {
       ev_click_hold_ms = n >= 5 && atoi(parts[4]) > 0 ? atoi(parts[4]) : DEFAULT_CLICK_HOLD_MS;
       ev_click_drag_px = n >= 6 && atoi(parts[5]) > 0 ? atoi(parts[5]) : DEFAULT_CLICK_DRAG_PX;
       ev_menu_min_ms = n >= 7 && atoi(parts[6]) > 0 ? atoi(parts[6]) : 0;
+      ev_dbl_ms = n >= 8 && atoi(parts[7]) > 0 ? atoi(parts[7]) : 0;
       ev_trigger_vk = vk;
       emit(source_count > 0 ? "TRIGGER_READY" : "TRIGGER_FAILED");
     }

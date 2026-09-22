@@ -38,6 +38,7 @@ import {
   Settings,
   Shapes,
   Shield,
+  MousePointerClick,
   Square,
   SquareStack,
   TerminalSquare,
@@ -228,6 +229,10 @@ interface SettingItem {
  * palette, stack of windows, shield) instead of the abstract Windows/web panel icon.
  * Monochrome — color stays reserved for action or state, never for navigation.
  */
+/** Calibration shape: how many presses of each kind define the two sides of the boundary. */
+const CALIBRATION_FAST_PRESSES = 3;
+const CALIBRATION_SLOW_PRESSES = 2;
+
 const SECTIONS: Array<{ id: SectionId; label: string; caption: string; icon: LucideIcon }> = [
   { id: 'spaces', label: 'Workspaces', caption: 'Contexts and their shortcuts.', icon: SquareStack },
   { id: 'trigger', label: 'Activation', caption: 'How and where the wheel appears.', icon: Mouse },
@@ -252,6 +257,53 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   const isLinux = navigator.userAgent.includes('Linux');
   /** Follow pointer needs the global cursor position — Wayland doesn't expose one. */
   const [waylandLimited, setWaylandLimited] = React.useState(false);
+  /**
+   * Middle-click calibration, two-sided: 3 fast presses learn "still a tab close", 2 slower
+   * presses learn "clearly the menu", and the threshold becomes the boundary between them.
+   * Main streams every real middle-press duration; this side owns the phases.
+   */
+  const [mmbCalibration, setMmbCalibration] = React.useState<{
+    phase: 'tabs' | 'menu' | 'done';
+    fast: number[];
+    slow: number[];
+    threshold: number;
+  } | null>(null);
+  const cancelMmbCalibration = React.useCallback(() => {
+    setMmbCalibration(null);
+    window.electron?.calibrationCancel?.();
+  }, []);
+  /** The sample handler reads the latest state without re-subscribing on every change. */
+  const mmbCalibrationRef = React.useRef(mmbCalibration);
+  mmbCalibrationRef.current = mmbCalibration;
+
+  React.useEffect(() => {
+    const off1 = window.electron?.onCalibrationStarted?.(() =>
+      setMmbCalibration({ phase: 'tabs', fast: [], slow: [], threshold: 0 }));
+    const off2 = window.electron?.onCalibrationSample?.((heldMs) => {
+      const prev = mmbCalibrationRef.current;
+      if (!prev || prev.phase === 'done') return;
+      if (prev.phase === 'tabs') {
+        const fast = [...prev.fast, heldMs];
+        setMmbCalibration(fast.length >= CALIBRATION_FAST_PRESSES ? { ...prev, fast, phase: 'menu' } : { ...prev, fast });
+        return;
+      }
+      const slow = [...prev.slow, heldMs];
+      if (slow.length < CALIBRATION_SLOW_PRESSES) {
+        setMmbCalibration({ ...prev, slow });
+        return;
+      }
+      /** The boundary sits halfway between the slowest "tab close" and the fastest "menu";
+       * with no separation (presses too alike), fall back to slowest + 150 ms. */
+      const maxFast = Math.max(...prev.fast, 0);
+      const minSlow = Math.min(...slow);
+      const raw = minSlow > maxFast + 60 ? (maxFast + minSlow) / 2 : maxFast + 150;
+      const threshold = Math.min(1000, Math.max(150, Math.round(raw)));
+      update('menuHoldMinMs', threshold);
+      window.electron?.calibrationCancel?.();
+      setMmbCalibration({ phase: 'done', fast: prev.fast, slow, threshold });
+    });
+    return () => { off1?.(); off2?.(); };
+  }, []);
   React.useEffect(() => {
     let cancelled = false;
     void window.electron?.isWaylandNative?.().then((info) => {
@@ -1007,6 +1059,27 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
               config.menuHoldMinMs ?? 350, 150, 1000,
               (value) => update('menuHoldMinMs', Math.round(value)),
               (value) => `${Math.round(value)} ms`, 50, 'menuHoldMinMs')]
+          : []),
+        ...(config.mouseTriggerMode === 'click' && !mmbCalibration
+          ? [{
+              key: 'mmbCalibration', group: 'Mouse',
+              title: 'Calibrate from your own clicks',
+              description: 'Five presses set the boundary: 3 fast like closing a tab, then 2 slower like you want the menu.',
+              kind: 'action' as const, actionLabel: 'Calibrate', actionIcon: MousePointerClick,
+              onRun: () => {
+                setMmbCalibration({ phase: 'tabs', fast: [], slow: [], threshold: 0 });
+                window.electron?.calibrationStart?.();
+              },
+            }]
+          : []),
+        ...(config.mouseTriggerMode === 'click' && !mmbCalibration
+          ? [{
+              key: 'doubleClickOpensMenu', configKey: 'doubleClickOpensMenu' as const, group: 'Mouse',
+              title: 'Double middle click opens the menu',
+              description: 'Two quick presses open the wheel. A single fast press always stays native (tab close) — it lands ~300 ms late while Rovyl waits for the second press.',
+              kind: 'bool' as const, enabled: config.doubleClickOpensMenu === true,
+              onToggle: () => update('doubleClickOpensMenu', !(config.doubleClickOpensMenu === true)),
+            }]
           : []),
         {
           key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
@@ -1826,6 +1899,16 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
             </motion.div>
           )}
         </AnimatePresence>
+
+        {mmbCalibration && (
+          <CalibrationModal
+            phase={mmbCalibration.phase}
+            fast={mmbCalibration.fast}
+            slow={mmbCalibration.slow}
+            threshold={mmbCalibration.threshold}
+            onClose={cancelMmbCalibration}
+          />
+        )}
       </motion.section>
     </div>
   );
@@ -3140,6 +3223,145 @@ interface PictureInForce extends CustomIconPick {
  * Mounting IS opening: the caller holds the "which icon" state, `AnimatePresence` handles the exit,
  * and `onClose` is the only way out — the escape key, the backdrop, the X and Done all take it.
  */
+/**
+ * Middle-click calibration, as steps and two-sided: the user presses the real middle button
+ * 3 times fast (tab close) and then 2 times slower (menu intent), main times each press
+ * through the helper, and the menu threshold becomes the boundary between the two speeds.
+ * Escape cancels at any point.
+ */
+function CalibrationModal({
+  phase,
+  fast,
+  slow,
+  threshold,
+  onClose,
+}: {
+  phase: 'tabs' | 'menu' | 'done';
+  fast: number[];
+  slow: number[];
+  threshold: number;
+  onClose: () => void;
+}) {
+  /** A modal that only closes with the mouse is a modal that traps whoever uses the keyboard. */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseRef.current();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  const allPresses = [...fast, ...slow];
+  return (
+    <motion.div
+      className="zs-icon-modal-layer"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.14 }}
+      role="presentation"
+    >
+      <motion.div
+        className="zs-icon-modal zs-cal-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Calibrate the middle click"
+        initial={{ opacity: 0, scale: 0.97, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.98, y: 4 }}
+        transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+      >
+        <header>
+          <div>
+            <b>Calibrate the middle click</b>
+            <small>
+              {phase === 'tabs'
+                ? 'First, the fast side: close a tab a few times.'
+                : phase === 'menu'
+                  ? 'Now the slow side: tell Rovyl what “open the menu” feels like.'
+                  : 'Calibration complete.'}
+            </small>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close calibration">
+            <X size={14} strokeWidth={2} />
+          </button>
+        </header>
+        <div className="zs-icon-modal-body">
+          <div className="zs-cal-steps">
+            <div className="zs-cal-step done">
+              <i>1</i>
+              <div>
+                <b>Leave the settings window</b>
+                <p>Move the pointer to the desktop, or to a tab you can close.</p>
+              </div>
+            </div>
+            <div className={`zs-cal-step ${phase === 'tabs' ? 'active' : 'done'}`}>
+              <i>2</i>
+              <div>
+                <b>Press the middle button {CALIBRATION_FAST_PRESSES} times — fast</b>
+                <p>Like you are closing a tab. {Math.min(fast.length, CALIBRATION_FAST_PRESSES)}/{CALIBRATION_FAST_PRESSES}{phase === 'tabs' ? '…' : ' recorded'}</p>
+              </div>
+            </div>
+            <div className={`zs-cal-step ${phase === 'menu' ? 'active' : phase === 'done' ? 'done' : ''}`}>
+              <i>3</i>
+              <div>
+                <b>Press {CALIBRATION_SLOW_PRESSES} times — slower</b>
+                <p>Hold briefly, like you mean to open the menu. {Math.min(slow.length, CALIBRATION_SLOW_PRESSES)}/{CALIBRATION_SLOW_PRESSES}{phase === 'menu' ? '…' : phase === 'done' ? ' recorded' : ''}</p>
+              </div>
+            </div>
+            <div className={`zs-cal-step ${phase === 'done' ? 'done' : ''}`}>
+              <i>4</i>
+              <div>
+                <b>Done</b>
+                <p>The boundary between the two speeds becomes the menu threshold.</p>
+              </div>
+            </div>
+          </div>
+          {phase === 'tabs' && (
+            <div className="zs-cal-progress" aria-label={`${fast.length} of ${CALIBRATION_FAST_PRESSES} fast presses recorded`}>
+              {Array.from({ length: CALIBRATION_FAST_PRESSES }, (_, slot) => (
+                <i key={slot} className={slot < fast.length ? 'hit' : ''} />
+              ))}
+            </div>
+          )}
+          {phase === 'menu' && (
+            <div className="zs-cal-progress" aria-label={`${slow.length} of ${CALIBRATION_SLOW_PRESSES} slow presses recorded`}>
+              {Array.from({ length: CALIBRATION_SLOW_PRESSES }, (_, slot) => (
+                <i key={slot} className={slot < slow.length ? 'hit' : ''} />
+              ))}
+            </div>
+          )}
+          {allPresses.length > 0 && (
+            <div className="zs-cal-times">
+              {allPresses.map((ms, i) => (
+                <span key={i}>{Math.round(ms)} ms</span>
+              ))}
+            </div>
+          )}
+          {phase === 'done' && (
+            <div className="zs-cal-result">
+              <b>Menu threshold set to {threshold} ms</b>
+              <small>Middle clicks under {threshold} ms stay native (tab close). From {threshold} ms to 1 s opens the menu.</small>
+            </div>
+          )}
+        </div>
+        <div className="zs-cal-actions">
+          {phase === 'done' ? (
+            <button type="button" className="zs-btn is-primary" onClick={onClose}>Done</button>
+          ) : (
+            <button type="button" className="zs-btn" onClick={onClose}>Cancel</button>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function IconPickerModal({
   titleId,
   title,
