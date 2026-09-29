@@ -1,6 +1,8 @@
 import { LucideIcon } from "lucide-react";
 /** `import type` is erased at compile time: `launchFailure.ts` stays in the card's late chunk only. */
 import type { ExecutionErrorDetails } from "./launchFailure";
+/** Erased at compile time: the drop classifier is only ever loaded by the settings chunk. */
+import type { InspectedDropPath } from "./utils/droppedShortcut";
 
 export type SubscriptionTier = "free" | "plus" | "pro";
 
@@ -134,11 +136,29 @@ export interface Workspace {
   id: string;
   name: string;
   apps: AppItem[];
-  /** Number key used while the radial is open. Zero means picker/mouse-wheel only. */
+  /**
+   * The POSITIONAL number key: 1–9 by place in the list, zero past the ninth. Renumbered on every
+   * reorder and every delete, so it always describes the position and never the workspace.
+   *
+   * It is the default, not the binding — read `workspaceKeyAt`, which prefers `hotkeyKey`.
+   */
   hotkey: number; // 0 or 1-9
+  /**
+   * A key recorded for THIS workspace, which outranks the positional digit above.
+   *
+   * Three states, and the difference between two of them is the whole point:
+   *   absent — never edited, so the workspace follows its position and keeps doing so after a
+   *            reorder. This is what every existing config has.
+   *   ''     — deliberately no key, which is what is left behind when the key is given to
+   *            something else. It survives a reorder; a missing field would not.
+   *   'K'    — that key, stored as the single upper-case character the layout prints.
+   *
+   * Read it through `workspaceKeyAt`; a config can be hand-edited and this one is a free string.
+   */
+  hotkeyKey?: string;
   enabled: boolean;
   color?: string; // Optional project/workspace color
-  /** Lucide icon on the first wheel when `workspaceSwitchMode === 'picker'`. Omitted → Layers. */
+  /** Lucide icon on the home launcher — the wheel's first level. Omitted → Layers. */
   pickerIconName?: string;
   /**
    * A picture chosen for the workspace, drawn instead of `pickerIconName` — a `rovyl-icon://`
@@ -292,25 +312,35 @@ export interface UIConfig {
   workspaces: Workspace[]; // New: Workspace configurations
   activeWorkspaceIndex: number; // New: Currently active workspace (0-indexed)
   /**
-   * hotkeys: keys 1–9 (and the mouse wheel) switch workspace while the menu is open.
-   * picker: opening the radial shows the workspace wheel first; picking one shows that space's apps; the center goes back (like folders).
-   */
-  workspaceSwitchMode?: 'hotkeys' | 'picker';
-  /**
    * Theme for the opaque surfaces (titlebar + Settings). The radial always stays
    * dark: it is an overlay on the desktop, not a surface of the product.
    */
   appearanceTheme?: 'black' | 'white';
   /**
    * How the wheel decides the target.
-   * 'angle'  — direction from the center; the slice lights up even with the cursor far away (default).
+   * 'area'   — direction from the centre (default). The plane is cut into as many equal shares as
+   *            there are items, and the one pointed at is the target with the cursor anywhere
+   *            inside its share — including far outside the ring.
    * 'cursor' — only lights up when the pointer is right over the icon.
-   * 'area'   — the same maths as 'angle', with the division DRAWN: the wheel is cut into as many
-   *            equal wedges as there are items and the one being pointed at fills with a gradient.
-   *            Same targeting, so a config can move between the two without relearning the aim —
-   *            what changes is that the boundaries stop being something to infer.
+   *
+   * 'angle' was a third value and is gone. It aimed exactly as 'area' does and differed only in
+   * that the shares were not drawn — which is a question about what is painted, not about how the
+   * wheel targets, and is `radialAreaWedges` now. Configs carrying it are rewritten on read; see
+   * `normalizeStoredConfig`.
    */
-  radialSelectionMode?: 'angle' | 'cursor' | 'area';
+  radialSelectionMode?: 'cursor' | 'area';
+  /**
+   * Whether area targeting DRAWS the division it aims by.
+   *
+   * On: the seams are there from the moment the wheel opens and the share being aimed at fills
+   * with the hover colour, so where one target stops owning the pointer and the next begins stops
+   * being something the hand can only learn by being wrong about it.
+   *
+   * Off (default): the same aim, nothing painted — only the icon lights up. Off is the default
+   * because it is what the wheel has always looked like, and an update must not repaint the
+   * screen of somebody who asked for nothing.
+   */
+  radialAreaWedges?: boolean;
   /**
    * Launch without a click: holding the aim on a target for `radialInstantDwellMs` launches it.
    *
@@ -340,12 +370,13 @@ export interface UIConfig {
    * Number keys pick AND run: while the wheel is up, 1-9 launch the shortcut sitting in that
    * position, with no Enter and no aiming. The digits count from the top and go clockwise, the
    * same order the wheel is laid out in, and they address the level on screen — inside a folder
-   * they are that folder's items, on the workspace picker they are the workspaces.
+   * they are that folder's items, on the home launcher they are the workspaces.
    *
-   * It CLAIMS the digits. `workspaceSwitchMode: 'hotkeys'` registers 1-9 as global shortcuts while
-   * the wheel is open, and two features cannot own one key: with this on, the wheel asks main not
-   * to register them and switching by number goes back to the picker wheel. That is said out loud
-   * in the settings row rather than discovered by pressing 2 and watching an app open.
+   * It CLAIMS the digits. The workspace keys are registered as global shortcuts while the wheel is
+   * open, and two features cannot own one key: with this on, the wheel asks main not to register
+   * the DIGITS among them, so a workspace still on its positional default goes quiet while a
+   * workspace whose key was recorded as a letter keeps working. That is said out loud in the
+   * settings row rather than discovered by pressing 2 and watching an app open.
    *
    * Off by default: it turns a keystroke that filtered ("Photoshop 2024") into one that launches.
    */
@@ -412,10 +443,15 @@ export interface UIConfig {
   /** toggle: pressing shortcut opens/closes; hold: holding shortcut opens, releasing runs selection or closes. */
   shortcutTriggerMode?: 'toggle' | 'hold';
   /**
-   * Physical button that opens the wheel. Left and right are off the table: watching them
-   * globally would collide with the primary click and the system context menu.
+   * The button that opens the wheel, as a binding rather than a name: a button plus the modifiers
+   * held with it — `middle`, `x1`, `Ctrl+left`, `Alt+Shift+x2`. The grammar, the spellings it
+   * accepts and the one rule it enforces (left and right are only bindable with a modifier) live
+   * in `src/constants/mouseTrigger.ts`, which main mirrors in `backend/mouse-trigger.cjs`.
+   *
+   * Left as a plain string: the set of buttons a mouse can report is not a list this type should
+   * be pretending to close, and the three values this field used to hold are still valid.
    */
-  mouseTriggerButton?: 'middle' | 'x1' | 'x2';
+  mouseTriggerButton?: string;
   language: "en" | "ar" | "pt" | "es" | "fr" | "de" | "it" | "ja" | "zh" | "ko" | "ru";
   performanceMode: boolean; // New: Strict performance mode for zero-lag
   /**
@@ -497,6 +533,8 @@ export interface ElectronAPI {
   }>;
   installUpdateNow?: () => void;
   wasOpenedAtLogin?: () => Promise<boolean>;
+  /** Resolved in the preload, so the very first render already knows — a login start stays in the tray. */
+  openedAtLogin?: boolean;
   /** The main confirms the app really has an IDE profile with an MRU (do not guess by name). */
   appSupportsRecents?: (appName: string, appCommand: string) => Promise<boolean>;
   /** Real pointer position while the wheel is open (Wayland has no global cursor query). */
@@ -657,6 +695,8 @@ export interface ElectronAPI {
   /** The page's own <title>, so a web shortcut is named the way its browser tab is. */
   getWebsitePageTitle?: (pageUrl: string) => Promise<string | null>;
   minimizeWindow: () => void;
+  /** The colour the native window shows before the page paints (`#rrggbb`). */
+  setWindowBackground?: (color: string) => void;
   toggleMaximize: () => void;
   quitApp: () => void;
   onWindowState: (
@@ -670,6 +710,12 @@ export interface ElectronAPI {
    */
   selectFile: (options?: { mode?: "executable" | "any" }) => Promise<string | null>;
   selectFolder: () => Promise<string | null>;
+  /**
+   * What a set of dropped paths are — folder, program, document or internet shortcut — resolved
+   * through `.lnk` and `.url` files. Only main can stat a path, and a drop carries nothing but the
+   * string, so a dropped shortcut's `commandType` comes from here.
+   */
+  inspectDropPaths?: (paths: string[]) => Promise<(InspectedDropPath | null)[]>;
   /** The open dialog for a custom icon: pictures, icon files, programs, or any file's own icon. */
   chooseCustomIconFile?: () => Promise<string | null>;
   /** Accepts `path` or `path,index`, with `%VARIABLES%`. */
@@ -707,6 +753,9 @@ export interface ElectronAPI {
   }>;
   startShortcutRecording: () => void;
   stopShortcutRecording: () => void;
+  /** Releases / re-arms the global mouse hook while Settings records a trigger button. */
+  pauseMouseTrigger?: () => void;
+  resumeMouseTrigger?: () => void;
   onShortcutRecorded: (callback: (shortcut: string) => void) => () => void;
   saveFullConfig: (config: any) => Promise<{ ok: boolean; error?: string }>;
   /** Synchronous save to disk (Electron); returns false if main rejected or IPC failed. */
@@ -724,12 +773,17 @@ export interface ElectronAPI {
   getAppRecents: (appName: string, appCommand?: string) => Promise<AppItem[]>;
   setWorkspaceShortcutsState: (
     isOpen: boolean,
-    workspaceSwitchMode?: 'hotkeys' | 'picker',
     /**
      * The wheel is handling 1-9 itself (`radialNumberLaunch`), so main must NOT register them as
      * global shortcuts — registered, they never reach the renderer at all.
      */
     numberKeysClaimed?: boolean,
+    /**
+     * Which key belongs to which workspace, from `workspaceKeyBindings`. Main registers exactly
+     * these while the wheel is open; it used to hardcode 1–9 against the position, which stopped
+     * being true the moment a key could be recorded.
+     */
+    keys?: Array<{ key: string; index: number }>,
   ) => void;
   exportConfig: () => Promise<{ success: boolean; error?: string }>;
   importConfig: () => Promise<{ success: boolean; error?: string }>;

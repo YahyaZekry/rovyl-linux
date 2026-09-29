@@ -17,9 +17,12 @@
   img, svg { -webkit-user-drag: none; user-select: none; }
   #root { width: 100%; height: 100%; }
   * { scrollbar-width: thin; scrollbar-color: rgba(242, 242, 237, .15) transparent; }
-  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar { width: 9px; height: 9px; }
   *::-webkit-scrollbar-thumb { background: rgba(242, 242, 237, .15); border-radius: 999px; }
   *::-webkit-scrollbar-track { background: transparent; }
+  /* Where two bars meet, Chromium paints the corner in its own light default — a white block
+     in the bottom corner of every dark panel. Nothing goes there. */
+  *::-webkit-scrollbar-corner { background: transparent; }
 }
 
 /* ══ Zenith surface tokens ═════════════════════════════════════════════════
@@ -64,7 +67,8 @@
   --zn-10: 40px;
 
   /* Radius: the radius communicates hierarchy (window > panel > control > chip). */
-  --zn-r-window: 12px;
+  /* 0: the window is opaque now and Windows owns its corners (rounded on 11, square on 10). */
+  --zn-r-window: 0px;
   --zn-r-panel: 10px;
   --zn-r-control: 8px;
   --zn-r-chip: 6px;
@@ -111,6 +115,8 @@
   border-radius: var(--zn-r-window);
   box-shadow: inset 0 0 0 1px var(--zn-line);
 }
+/* Maximized, the window meets the screen edges like any Windows window: no hairline. */
+.zenith-panel-surface[data-window-state="maximized"] { box-shadow: none; }
 
 /*
  * The panel can stay visible underneath the radial. Some inner controls use
@@ -498,8 +504,8 @@
 /* Points DOWN: `.zs-editor-body` has `overflow-y: auto`, and these buttons live at the top of
    it — a tip pointing up left the container and was clipped by the editor's header. */
 .zs-flag-btn[data-tip]::after {
-  content: attr(data-tip); position: absolute; top: calc(100% + 6px); left: 50%;
-  transform: translateX(-50%) translateY(-3px); z-index: 30;
+  content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0;
+  transform: translateY(-3px); z-index: 30;
   width: max-content; max-width: 190px; padding: 5px 8px;
   border: 1px solid var(--zn-line); border-radius: var(--zn-r-chip);
   background: var(--zn-surface); color: var(--zn-text);
@@ -508,7 +514,7 @@
   transition: opacity .12s var(--zn-ease), transform .12s var(--zn-ease);
 }
 .zs-flag-btn[data-tip]:hover::after,
-.zs-flag-btn[data-tip]:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+.zs-flag-btn[data-tip]:focus-visible::after { opacity: 1; transform: translateY(0); }
 .zs-flag-btn {
   position: relative;
   display: grid; place-items: center; width: 32px; height: 32px; padding: 0;
@@ -653,6 +659,69 @@
 .zs-segmented button.is-selected:hover:not(:disabled) { background: var(--zn-pressed); box-shadow: inset 0 0 0 1px var(--zn-line-strong); }
 .zs-segmented button:disabled { color: var(--zn-text-3); cursor: not-allowed; }
 
+/* ── Mouse trigger (what is bound, and the button that rebinds it) ──────── */
+
+/* A readout beside a record button, not a set of choices: the buttons a mouse can send are not a
+   list this row could draw. Column, because the refusal needs the width to say why. */
+.zs-mouse-trigger { display: flex; flex-direction: column; align-items: flex-end; gap: var(--zn-2); min-width: 0; }
+.zs-mouse-trigger-row { display: flex; align-items: center; gap: var(--zn-2); }
+.zs-mouse-trigger-slot {
+  min-width: 104px; height: var(--zn-ctl);
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  padding: 0 var(--zn-3); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control);
+  background: var(--zn-sunken);
+  transition: border-color .15s var(--zn-ease), background .15s var(--zn-ease);
+}
+.zs-mouse-trigger-slot kbd {
+  min-width: 26px; padding: 5px 8px; color: var(--zn-text);
+  border: 1px solid var(--zn-line-strong); border-radius: var(--zn-r-chip); background: var(--zn-raised);
+  font: 500 12px/1 var(--font-display); text-align: center; white-space: nowrap;
+}
+.zs-mouse-trigger-plus { color: var(--zn-text-3); font: 500 10px/1 var(--font-ui); }
+.zs-mouse-trigger-slot em { color: var(--zn-text); font: 450 11.5px/1 var(--font-ui); font-style: normal; }
+/* Listening. The border does the work — a filled field would read as a value already set. */
+.zs-mouse-trigger-slot.is-recording { border-color: var(--zn-solid); background: var(--zn-raised); }
+
+/* The button, and the hint that stands in its place while the whole window is being listened to.
+   Same box either way, so arming the recorder does not move the row under the pointer. */
+.zs-shell .zs-mouse-trigger-record,
+.zs-shell .zs-mouse-trigger-stop {
+  height: var(--zn-ctl); display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 var(--zn-3); color: var(--zn-text-2);
+  border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: var(--zn-raised);
+  font: 500 11.5px/1 var(--font-ui); white-space: nowrap;
+}
+.zs-shell .zs-mouse-trigger-record {
+  cursor: pointer;
+  transition: color .15s var(--zn-ease), border-color .15s var(--zn-ease), background .15s var(--zn-ease);
+}
+.zs-shell .zs-mouse-trigger-record:hover { color: var(--zn-text); border-color: var(--zn-line-strong); background: var(--zn-hover); }
+.zs-shell .zs-mouse-trigger-record:active { background: var(--zn-pressed); }
+/* The one spot of colour in the panel, and it earns it: red is what a record button is. */
+.zs-mouse-trigger-record svg, .zs-mouse-trigger-stop svg { color: rgba(226, 92, 92, .9); }
+/* Listening: no hover, no press — there is nothing here to click, and it must not look otherwise. */
+.zs-shell .zs-mouse-trigger-stop { color: var(--zn-text); border-color: var(--zn-line-strong); cursor: default; }
+.zs-mouse-trigger-stop svg { animation: zs-record-pulse 1.1s var(--zn-ease) infinite; }
+@keyframes zs-record-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+.zs-mouse-trigger-note {
+  max-width: 280px; margin: 0; text-align: right;
+  display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--zn-2);
+  color: var(--zn-text-2); font-size: 10.5px; line-height: 1.5;
+}
+/* Amber, like every other "nothing failed, nothing was written" note in this panel. */
+.zs-mouse-trigger-note.is-warn {
+  grid-template-columns: 13px minmax(0, 1fr); text-align: left;
+  padding: var(--zn-2) var(--zn-3);
+  border: 1px solid rgba(224, 160, 60, .28); border-radius: var(--zn-r-chip);
+  background: rgba(224, 160, 60, .07); color: rgba(233, 189, 120, .92);
+}
+.zs-mouse-trigger-note.is-warn svg { margin-top: 1px; color: rgba(233, 189, 120, .9); }
+[data-zn-theme="white"] .zs-mouse-trigger-note.is-warn {
+  border-color: rgba(146, 92, 6, .3); background: rgba(180, 120, 20, .09); color: rgba(122, 76, 4, .95);
+}
+[data-zn-theme="white"] .zs-mouse-trigger-note.is-warn svg { color: rgba(146, 92, 6, .9); }
+
 /* ── Select (trigger in the row, listbox in a portal) ───────────────────── */
 
 .zs-select { position: relative; display: inline-flex; align-items: center; min-width: 0; }
@@ -717,11 +786,45 @@
   color: var(--zn-text-3); font: 450 11px/1.2 var(--font-ui);
 }
 .zs-select-option > svg { flex: none; margin-inline-start: auto; color: var(--zn-solid); }
+/* Space held for the check on the rows that do not have one — see the option's own note. */
+.zs-select-option > svg.is-blank { visibility: hidden; }
 .zs-select-option.is-active { background: var(--zn-hover); }
 .zs-select-option.is-active > b { color: var(--zn-text); }
 /* Chosen is stated by the check, not by a fill — a filled row plus a highlighted row reads as two
    selections when the keyboard has moved away from what is set. */
 .zs-select-option[aria-selected="true"] > b { color: var(--zn-text); }
+
+/* The help mark: what the label used to say in parentheses, folded into one glyph.
+
+   It takes the auto margin so it ends the row, and hands it back to the check when a check is
+   there too — two auto margins would split the free space between them and leave the mark
+   stranded in the middle of the option instead of next to the glyph it belongs beside. */
+.zs-select-help {
+  flex: none; display: inline-flex; align-items: center;
+  margin-inline-start: auto;
+  color: var(--zn-text-3);
+  transition: color .15s var(--zn-ease);
+}
+.zs-select-help + svg { margin-inline-start: var(--zn-1); }
+.zs-select-help:hover { color: var(--zn-text); }
+/* Hover reaches the mark long before the pointer is on the 13px glyph itself. */
+.zs-select-option.is-active .zs-select-help { color: var(--zn-text-2); }
+
+/* The bubble it opens. Under the popup and in the shell, not inside the list, because the list
+   scrolls and would clip it — same portal and same measured coordinates as the popup itself.
+
+   `width` is not decoration: the bubble's rendered height is measured to decide whether it still
+   fits under the popup, so the width has to be settled here before that measurement is taken. It
+   is `TIP_WIDTH` in `selectMenu.ts`, and the two are kept in step by hand. */
+.zs-select-tip {
+  position: absolute; z-index: 62;
+  width: 240px; padding: var(--zn-2) var(--zn-3);
+  border-radius: var(--zn-r-panel); background: var(--zn-surface);
+  box-shadow: inset 0 0 0 1px var(--zn-line-strong), var(--zn-elev);
+  color: var(--zn-text-2); font: 450 11px/1.5 var(--font-ui);
+  /* The pointer is on its way to a click; the bubble must not be what receives it. */
+  pointer-events: none;
+}
 
 .zs-slider { display: flex; align-items: center; gap: var(--zn-3); }
 /* The field's vertical slack is larger than the track's: it is the thumb that overhangs
@@ -802,7 +905,7 @@
 .zs-editor header p { margin: 0; color: var(--zn-text-2); font-size: 12px; line-height: 1.45; }
 .zs-editor header > button { width: var(--zn-ctl-sm); height: var(--zn-ctl-sm); flex: none; display: grid; place-items: center; padding: 0; color: var(--zn-text-3); border: 0; border-radius: var(--zn-r-chip); background: transparent; cursor: pointer; }
 .zs-editor header > button:hover { color: var(--zn-text); background: var(--zn-raised); }
-.zs-editor-body { min-height: 0; overflow-y: auto; padding: 0 var(--zn-5) var(--zn-5); }
+.zs-editor-body { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 var(--zn-5) var(--zn-5); }
 
 /* The close button and, on a workspace, the Visual / File switch beside it. */
 .zs-editor-head-actions { flex: none; display: flex; align-items: center; gap: var(--zn-2); }
@@ -954,23 +1057,62 @@
 .zs-workspace-manager { display: flex; flex-direction: column; gap: var(--zn-3); }
 .zs-workspace-overview {
   display: flex; flex-direction: column; gap: var(--zn-3);
-  padding-bottom: var(--zn-3); border-bottom: 1px solid var(--zn-line);
+  padding-bottom: var(--zn-3);
 }
 /* Identity on a single line; the states live below and do not stretch this area. */
 .zs-workspace-identity {
   min-width: 0; display: grid;
-  grid-template-columns: 48px minmax(180px, 1fr) auto auto;
+  grid-template-columns: 48px minmax(180px, 1fr) auto;
   grid-template-rows: auto;
   align-items: end; column-gap: var(--zn-3);
 }
 .zs-workspace-identity > .zs-workspace-icon-button { grid-area: 1 / 1; align-self: end; width: 48px; height: 48px; }
 .zs-workspace-identity > .zs-workspace-name-field { grid-area: 1 / 2; align-self: end; }
 .zs-workspace-identity > .zs-workspace-flags { grid-area: 1 / 3; align-self: end; margin-bottom: 1px; }
-.zs-workspace-meta {
-  grid-area: 1 / 4; align-self: end; margin: 0 0 9px;
-  display: flex; align-items: center; gap: var(--zn-2);
-  color: var(--zn-text-3); font-size: 10.5px;
+
+/* The wheel key: a row of its own under the identity, because the clash warning needs the width. */
+.zs-ws-key { display: flex; flex-direction: column; gap: var(--zn-2); }
+.zs-ws-key-row { display: flex; align-items: center; gap: var(--zn-2); }
+.zs-ws-key-label { color: var(--zn-text-2); font-size: 11.5px; font-weight: 500; }
+/* The key IS the button — a field showing what it holds, not a label with a button beside it. */
+.zs-ws-key-slot {
+  min-width: 96px; height: var(--zn-ctl);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--zn-2);
+  padding: 0 var(--zn-3); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control);
+  background: var(--zn-sunken); cursor: pointer;
+  transition: border-color .15s var(--zn-ease), background .15s var(--zn-ease);
 }
+.zs-ws-key-slot:hover { border-color: var(--zn-line-strong); background: var(--zn-raised); }
+.zs-ws-key-slot kbd {
+  min-width: 26px; padding: 5px 8px; color: var(--zn-text);
+  border: 1px solid var(--zn-line-strong); border-radius: var(--zn-r-chip); background: var(--zn-raised);
+  font: 500 12px/1 var(--font-display); text-align: center;
+}
+.zs-ws-key-slot kbd.is-empty { color: var(--zn-text-3); border-style: dashed; background: transparent; }
+.zs-ws-key-slot em { color: var(--zn-text-2); font: 450 11.5px/1 var(--font-ui); font-style: normal; }
+/* Listening. The border does the work — a filled field would read as a value that is already set. */
+.zs-ws-key-slot.is-recording { border-color: var(--zn-solid); background: var(--zn-raised); }
+.zs-ws-key-slot.is-recording em { color: var(--zn-text); }
+
+/* Amber like `.zs-shortcut-note.is-warn`, for the same reason: nothing failed, and nothing has
+   been written — the key belongs to something else and the next click decides what happens. */
+.zs-ws-key-clash {
+  display: flex; flex-direction: column; gap: var(--zn-3);
+  padding: var(--zn-3); border: 1px solid rgba(224, 160, 60, .28);
+  border-radius: var(--zn-r-chip); background: rgba(224, 160, 60, .07);
+}
+.zs-ws-key-clash > p {
+  display: grid; grid-template-columns: 13px minmax(0, 1fr); align-items: start; gap: var(--zn-2);
+  margin: 0; color: rgba(233, 189, 120, .92); font-size: 10.5px; line-height: 1.5;
+}
+.zs-ws-key-clash > p svg { margin-top: 1px; color: rgba(233, 189, 120, .9); }
+.zs-ws-key-clash > p b { color: var(--zn-text); font-weight: 600; }
+.zs-ws-key-clash-actions { display: flex; flex-wrap: wrap; gap: var(--zn-2); }
+[data-zn-theme="white"] .zs-ws-key-clash {
+  border-color: rgba(146, 92, 6, .3); background: rgba(180, 120, 20, .09);
+}
+[data-zn-theme="white"] .zs-ws-key-clash > p { color: rgba(122, 76, 4, .95); }
+[data-zn-theme="white"] .zs-ws-key-clash > p svg { color: rgba(146, 92, 6, .9); }
 .zs-workspace-name-field { min-width: 0; display: flex; flex-direction: column; gap: var(--zn-2); }
 .zs-workspace-name-field > span { color: var(--zn-text-2); font-size: 11.5px; font-weight: 500; }
 .zs-workspace-name-field > input {
@@ -1151,7 +1293,71 @@
 .zs-icon-field-button > svg { justify-self: end; color: var(--zn-text-3); }
 .zs-icon-field-button:hover > svg { color: var(--zn-text-2); }
 
-.zs-workspace-shortcuts { min-width: 0; }
+/* `relative` for the drop sheet alone, which covers the section while something is held over it. */
+.zs-workspace-shortcuts { position: relative; min-width: 0; }
+
+/* ── Dropping a shortcut in ──────────────────────────────────────────────────
+   Anything dragged out of Windows — a program, a folder, a document, a link — lands as a shortcut
+   without a dialog. The sheet is the only thing that says so, and it only exists while the pointer
+   is over the section carrying something. */
+.zs-shortcut-drop {
+  position: absolute; inset: 0; z-index: 3;
+  color: var(--zn-text-2);
+  border: 1px dashed var(--zn-focus); border-radius: var(--zn-r-control);
+  /* Over the list, not instead of it: the shortcuts already there stay legible underneath. */
+  background: color-mix(in srgb, var(--zn-sunken) 86%, transparent);
+  backdrop-filter: blur(2px);
+  /* The section's own handlers do the work; the sheet must never become the drag's target,
+     or crossing into it would fire a dragleave and take itself back off the screen. */
+  pointer-events: none;
+}
+/* Sticky, and not centred in the sheet. A workspace with twenty shortcuts and an editor open is
+   several screens tall, so the middle of the sheet is somewhere nobody is looking — the message
+   rides the top of whatever part of the section is actually on screen instead. */
+.zs-shortcut-drop-copy {
+  position: sticky; top: 0;
+  display: flex; flex-direction: column; align-items: center; gap: var(--zn-2);
+  padding: var(--zn-5) var(--zn-4); text-align: center;
+}
+.zs-shortcut-drop-copy > svg { color: var(--zn-focus); }
+.zs-shortcut-drop-copy b { color: var(--zn-text); font-size: 12.5px; font-weight: 550; }
+.zs-shortcut-drop-copy small { max-width: 38ch; color: var(--zn-text-3); font-size: 10.5px; line-height: 1.5; }
+
+/* The drop being worked out: an indeterminate bar across the top of the section. Sticky so it is
+   on screen however far the list is scrolled, and a negative margin equal to its height so its
+   arrival and departure move nothing — the list must not jump under a pointer that just let go. */
+.zs-drop-progress {
+  position: sticky; top: 0; z-index: 4;
+  height: 3px; margin-bottom: -3px;
+  overflow: hidden; border-radius: 999px;
+  background: color-mix(in srgb, var(--zn-focus) 18%, transparent);
+  animation: zs-drop-progress-in .15s var(--zn-ease) both;
+}
+.zs-drop-progress > span {
+  position: absolute; inset-block: 0; left: 0; width: 40%;
+  border-radius: inherit; background: var(--zn-focus);
+  /* Off the left edge to off the right: `translateX` is in the segment's own width, so 250% of
+     40% puts its leading edge exactly at the far end of the track. */
+  animation: zs-drop-progress-slide 1.1s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+.zs-shell[dir="rtl"] .zs-drop-progress > span { animation-direction: reverse; }
+@keyframes zs-drop-progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+@keyframes zs-drop-progress-in { from { opacity: 0; } }
+@keyframes zs-drop-progress-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+/* Still says "working" without anything travelling across the screen. */
+@media (prefers-reduced-motion: reduce) {
+  .zs-drop-progress > span { width: 100%; animation: zs-drop-progress-pulse 1.6s ease-in-out infinite; }
+}
+
+/* Announced, never drawn — the drop's progress for a screen reader. */
+.zs-visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
 .zs-workspace-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--zn-4); margin-bottom: var(--zn-3); }
 .zs-workspace-section-head h3 { margin: 0; color: var(--zn-text); font-size: 13px; font-weight: 600; }
 /* Wraps because the row grew a fourth type (File): four chips do not fit the narrow
@@ -1170,7 +1376,7 @@
 @media (min-width: 900px) {
   .zs-workspace-workbench.is-split { grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: var(--zn-3); align-items: start; }
   .zs-workspace-workbench.is-split > .zs-add-panel { margin-bottom: 0; position: sticky; top: 0; }
-  .zs-workspace-workbench.is-split > .zs-workspace-items { max-height: min(420px, 52vh); overflow-y: auto; border-top: 0; scrollbar-gutter: stable; overscroll-behavior: contain; }
+  .zs-workspace-workbench.is-split > .zs-workspace-items { max-height: min(420px, 52vh); overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 }
 
 .zs-add-panel { margin-bottom: var(--zn-3); padding: var(--zn-3); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: var(--zn-sunken); }
@@ -1194,7 +1400,7 @@
 .zs-installed-apps > button > svg { color: var(--zn-text-3); }
 .zs-add-panel-foot {
   display: flex; align-items: center; justify-content: space-between; gap: var(--zn-2);
-  margin-top: var(--zn-2); padding-top: var(--zn-2); border-top: 1px solid var(--zn-line);
+  margin-top: var(--zn-2); padding-top: var(--zn-2);
   color: var(--zn-text-3); font-size: 9.5px;
 }
 .zs-installed-apps > button.is-selected {
@@ -1232,7 +1438,7 @@
 .zs-folder-picker b { font-size: 11.5px; font-weight: 500; }
 .zs-folder-picker small { margin-top: 2px; color: var(--zn-text-3); font-size: 9.5px; }
 
-.zs-workspace-items { overflow: hidden; border-top: 1px solid var(--zn-line); }
+.zs-workspace-items { overflow: hidden; }
 /* The card below assembles at the pace the editor opens. Snapping its margin, inset, corners and
    wash into place while the form underneath eased open read as two separate things happening to
    the same row. (The border's own 1px is not in the list: width has no in-between worth easing.) */
@@ -1409,7 +1615,8 @@
 .zs-delete-workspace:disabled { opacity: .3; cursor: not-allowed; }
 
 .zs-toast {
-  position: absolute; right: var(--zn-5); bottom: var(--zn-5); z-index: 30;
+  /* Bottom-left: the bottom-right corner is where the panels keep their action buttons. */
+  position: absolute; left: var(--zn-5); bottom: var(--zn-5); z-index: 30;
   display: flex; align-items: center; gap: var(--zn-2);
   padding: var(--zn-2) var(--zn-3);
   color: var(--zn-on-solid); border-radius: var(--zn-r-control); background: var(--zn-solid);
@@ -1535,7 +1742,8 @@
    ════════════════════════════════════════════════════════════════════════ */
 .zs-fault-stack {
   position: fixed;
-  right: var(--zn-5);
+  /* Bottom-left, like the toast: the bottom-right corner is where the panels keep their buttons. */
+  left: var(--zn-5);
   bottom: var(--zn-5);
   /* A definite width: without it the card's `min(380px, 100%)` resolved against a
      shrink-to-fit container, and the percentage has nothing to measure against. */
@@ -1543,7 +1751,7 @@
   max-height: calc(100vh - var(--zn-5) * 2);
   z-index: 1000;
   display: grid;
-  justify-items: end;
+  justify-items: start;
   gap: var(--zn-2);
   /* The `App` root is `pointer-events-none` in desktop mode. */
   pointer-events: none;
@@ -1551,7 +1759,7 @@
 /* Island mode: the window has `setIgnoreMouseEvents(true)` and is a square centred on the
    monitor — pinned to the corner the card landed mid-screen. There it is only a notice. */
 .zs-fault-stack.is-glance {
-  left: var(--zn-5);
+  right: var(--zn-5);
   width: auto;
   justify-items: center;
 }
@@ -1670,10 +1878,8 @@
   .zs-row { gap: var(--zn-4); }
   .zs-options-grid { grid-template-columns: 1fr; }
   .zs-workspace-overview { gap: var(--zn-3); }
-  /* Narrow: identity on top, states and count drop to the second line. */
+  /* Narrow: the name gives up its minimum rather than pushing the states off the row. */
   .zs-workspace-identity { grid-template-columns: 48px minmax(0, 1fr) auto; }
-  .zs-workspace-identity > .zs-workspace-flags { grid-area: 1 / 3; }
-  .zs-workspace-meta { grid-area: 2 / 2; align-self: start; margin: var(--zn-1) 0 0; }
   .zs-workspace-state { grid-template-columns: 1fr; }
   .zs-workspace-section-head { align-items: flex-start; flex-direction: column; }
   .zs-add-form { grid-template-columns: 1fr; }
@@ -1688,6 +1894,20 @@
   .zs-add-panel-head { grid-template-columns: 1fr; }
   .zs-workspace-item-editor { grid-template-columns: 1fr; padding-left: 42px; }
   .zs-launch-options { grid-template-columns: 1fr; }
+}
+
+/* Wide windows (maximized, or dragged large): the column grows with the window and sits in the
+   middle of it, instead of a 620px strip pinned to the sidebar with the rest of the screen empty. */
+@media (min-width: 1100px) {
+  .zs-window { grid-template-columns: 260px minmax(0, 1fr); }
+  .zs-canvas { width: min(820px, 100%); margin-inline: auto; }
+}
+@media (min-width: 1500px) {
+  .zs-window { grid-template-columns: 280px minmax(0, 1fr); }
+  .zs-scroll { padding-inline: var(--zn-10); }
+  .zs-canvas { width: min(980px, 100%); }
+  .zs-workspace-workbench.is-split > .zs-workspace-items { max-height: 62vh; }
+  .zs-installed-apps { max-height: min(520px, 48vh); }
 }
 
 @media (max-height: 560px) {

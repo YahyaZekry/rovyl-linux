@@ -26,6 +26,19 @@ contextBridge.exposeInMainWorld("electron", {
   },
   /** Tells a Windows startup apart from a manual open — see the scan deferral. */
   wasOpenedAtLogin: () => ipcRenderer.invoke("was-opened-at-login"),
+  /**
+   * The same answer, already here when React first renders.
+   *
+   * A login start belongs in the tray, and that is decided in the first render or not at all — an
+   * awaited answer would show the Settings window and then hide it again at every sign-in.
+   */
+  openedAtLogin: (() => {
+    try {
+      return ipcRenderer.sendSync("get-launch-flags")?.openedAtLogin === true;
+    } catch (e) {
+      return false;
+    }
+  })(),
   appSupportsRecents: (appName, appCommand) => ipcRenderer.invoke("app-supports-recents", appName, appCommand),
   onOpenMenu: (callback) => {
     const listener = (event, data) => callback(data);
@@ -203,10 +216,13 @@ contextBridge.exposeInMainWorld("electron", {
     return () => ipcRenderer.removeListener("switch-workspace", listener);
   },
   minimizeWindow: () => ipcRenderer.send("minimize-window"),
+  setWindowBackground: (color) => ipcRenderer.send("set-window-background", color),
   toggleMaximize: () => ipcRenderer.send("toggle-maximize"),
   quitApp: () => ipcRenderer.send("quit-app"),
   selectFile: (options) => ipcRenderer.invoke("select-file", options),
   selectFolder: () => ipcRenderer.invoke("select-folder"),
+  /** Drag-and-drop: what the dropped paths are, since only main can ask the disk. */
+  inspectDropPaths: (paths) => ipcRenderer.invoke("inspect-drop-paths", paths),
   /** Custom icons: see the block of the same name in electron-main. */
   chooseCustomIconFile: () => ipcRenderer.invoke("choose-custom-icon-file"),
   readCustomIconSource: (source) => ipcRenderer.invoke("read-custom-icon-source", source),
@@ -232,6 +248,13 @@ contextBridge.exposeInMainWorld("electron", {
   probeShortcut: (accelerator) => ipcRenderer.invoke("probe-shortcut", accelerator),
   startShortcutRecording: () => ipcRenderer.send("start-shortcut-recording"),
   stopShortcutRecording: () => ipcRenderer.send("stop-shortcut-recording"),
+  /**
+   * The mouse trigger's recorder reads the button in the renderer, so all it needs of main is that
+   * the global hook stop swallowing the button currently bound — otherwise the one button the user
+   * is most likely to press is the one that can never be recorded.
+   */
+  pauseMouseTrigger: () => ipcRenderer.send("pause-mouse-trigger"),
+  resumeMouseTrigger: () => ipcRenderer.send("resume-mouse-trigger"),
   onShortcutRecorded: (callback) => {
     const subscription = (event, shortcut) => callback(shortcut);
     ipcRenderer.on("shortcut-recorded", subscription);
@@ -272,13 +295,8 @@ contextBridge.exposeInMainWorld("electron", {
   importConfig: () => ipcRenderer.invoke("import-config"),
   getAppRecents: (appName, appCommand) =>
     ipcRenderer.invoke("get-app-recents", appName, appCommand),
-  setWorkspaceShortcutsState: (isOpen, workspaceSwitchMode, numberKeysClaimed) =>
-    ipcRenderer.send(
-      "set-workspace-shortcuts",
-      isOpen,
-      workspaceSwitchMode,
-      numberKeysClaimed,
-    ),
+  setWorkspaceShortcutsState: (isOpen, numberKeysClaimed, keys) =>
+    ipcRenderer.send("set-workspace-shortcuts", isOpen, numberKeysClaimed, keys),
   startGoogleAuth: () => ipcRenderer.send("start-google-auth"),
   onGoogleAuthSuccess: (callback) => {
     const listener = (event, user) => callback(user);

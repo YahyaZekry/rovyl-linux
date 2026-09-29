@@ -367,9 +367,13 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   hasSeenDirectionHint: false,
   workspaces: DEFAULT_WORKSPACES,
   activeWorkspaceIndex: 0,
-  workspaceSwitchMode: 'picker',
   appearanceTheme: 'black',
-  radialSelectionMode: 'angle',
+  radialSelectionMode: 'area',
+  /**
+   * The shares are aimed by but not drawn, which is the wheel every existing profile already has.
+   * Turning the wedges on is a deliberate choice in Appearance.
+   */
+  radialAreaWedges: false,
   /**
    * Off by default: with this on, resting the mouse over an icon LAUNCHES IT. Changing the
    * behaviour under someone already using the wheel would turn a neutral gesture (aiming) into a
@@ -401,6 +405,12 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   mouseTriggerMode: 'click',
   mouseTriggerButton: 'middle',
   shortcutTriggerMode: 'toggle',
+  /**
+   * On: a launcher that has to be started by hand is not there when the wheel is reached for, so a
+   * new install signs in ready — into the tray, not into Settings. Existing profiles keep what they
+   * have; `normalizeStoredConfig` holds a config saved before this key at `false`.
+   */
+  openAtLogin: true,
   language: "en",
   performanceMode: false,
   mainStartMenuDiscoveryDone: false,

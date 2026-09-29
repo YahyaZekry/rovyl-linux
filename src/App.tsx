@@ -243,7 +243,18 @@ export default function App() {
     return () => { cancelled = true; off?.(); };
   }, []);
 
-  const [isSettingsOpen, setIsSettingsOpen] = useState(true);
+  /**
+   * Open — unless Windows opened the app.
+   *
+   * Settings is what a manual launch is asking for, and the last thing a login start wants: with
+   * "start with Windows" on, Rovyl signs in to the tray with the wheel warm behind it. The window
+   * is created hidden and only `showWindow` puts it on screen, so leaving this closed is all it
+   * takes to keep the sign-in silent — and the flag is read synchronously in the preload precisely
+   * so the choice can be made here, in the first render, rather than as a flash.
+   */
+  const [isSettingsOpen, setIsSettingsOpen] = useState(
+    () => window.electron?.openedAtLogin !== true,
+  );
   /**
    * Where Settings was open. Up here because the panel does not survive using the app.
    *
@@ -275,6 +286,27 @@ export default function App() {
     isDashboardOpenRef.current = isDashboardOpen;
     isSettingsOpenRef.current = isSettingsOpen;
   }, [isDashboardOpen, isSettingsOpen]);
+
+  /**
+   * A file let go anywhere in this window that is not a drop zone.
+   *
+   * Chromium's default for that is to NAVIGATE to it — the whole of Settings replaced by a PDF, with
+   * no way back short of restarting. Settings invites dragging now (a program, a folder, a link, all
+   * land as shortcuts), so a near miss is the ordinary case and it has to be nothing at all. These
+   * listeners sit on `window` in the bubble phase, after the zones' own handlers, so a drop that WAS
+   * aimed at one has already been dealt with by the time this runs.
+   */
+  useEffect(() => {
+    const swallow = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+    };
+    window.addEventListener('dragover', swallow);
+    window.addEventListener('drop', swallow);
+    return () => {
+      window.removeEventListener('dragover', swallow);
+      window.removeEventListener('drop', swallow);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isDashboardOpen && !isSettingsOpen) {
@@ -1136,6 +1168,10 @@ export default function App() {
   const prevIsMenuOpenForCloseRef = useRef(false);
   /** OS hid the window (Alt+F4 / close) while React still had the panel "open" — sync refs before state so we don't schedule hideWindow twice. */
   const syncAfterMainWindowHidRef = useRef<() => void>(() => {});
+  /** The window is opaque: a strip exposed mid-resize shows this colour, so it follows the theme's `--zn-bg`. */
+  useEffect(() => {
+    window.electron?.setWindowBackground?.(config.appearanceTheme === 'white' ? '#e8e8ea' : '#151515');
+  }, [config.appearanceTheme]);
   useEffect(() => {
     syncAfterMainWindowHidRef.current = () => {
       if (hideTimeout.current) {
@@ -1364,6 +1400,7 @@ export default function App() {
       */}
       <div
         data-zn-theme={panelTheme}
+        data-window-state={windowState}
         className={`
         overflow-hidden [--zenith-title-bar-h:38px] absolute inset-0
         ${panelSurfaceOpen
@@ -1375,7 +1412,7 @@ export default function App() {
         {panelSurfaceOpen && (
           <div
             /* `zenith-titlebar` — styled in index.css, alongside the radial panel. */
-            className="zenith-titlebar absolute top-0 left-0 right-0 h-[var(--zenith-title-bar-h)] z-[999] flex items-center justify-between pl-3 rounded-t-[12px] overflow-hidden"
+            className="zenith-titlebar absolute top-0 left-0 right-0 h-[var(--zenith-title-bar-h)] z-[999] flex items-center justify-between pl-3 overflow-hidden"
             style={{ WebkitAppRegion: 'drag' } as any}
           >
             {isSettingsOpen ? (

@@ -77,6 +77,18 @@ export function normalizeStoredConfig(raw: unknown): UIConfig {
   }
 
   /**
+   * "Start with Windows" ships on, but only for installs that begin with it. A config written
+   * before the default changed belongs to somebody who has been using Rovyl without it, and an
+   * update must not put an entry in their startup list on its own.
+   *
+   * Same test as the card above — the key is ABSENT, not `false`. The main process keeps the
+   * identical rule over settings.json, so the toggle and the registry cannot come apart.
+   */
+  if (!('openAtLogin' in loaded)) {
+    config = { ...config, openAtLogin: false };
+  }
+
+  /**
    * "Background dimming" used to top out at half a pool; it now reaches an opaque screen. The saved
    * number therefore means something darker than it did, and the default was the top of the old
    * scale — so left alone, every existing profile would have blacked the screen out on the first
@@ -95,6 +107,24 @@ export function normalizeStoredConfig(raw: unknown): UIConfig {
         'backdropOpacity' in loaded ? Number((loaded as any).backdropOpacity) : 1,
       ),
     };
+  }
+
+  /**
+   * Targeting used to offer three choices — Direction, Area, Pointer — of which the first two
+   * aimed identically and disagreed only about whether the shares were drawn. Drawing is not a way
+   * of targeting, so there are two modes now and a switch beside them.
+   *
+   * Both halves have to be read off the STORED value, and neither may fall back to the default.
+   * 'angle' says the person never had the wedges and 'area' says they chose them; writing the flag
+   * from that, once, is the difference between an update that changes nothing on screen and one
+   * that either takes the wedges away from everyone who picked them or hands them to everyone who
+   * did not.
+   */
+  if (!('radialAreaWedges' in loaded)) {
+    config = { ...config, radialAreaWedges: (loaded as any).radialSelectionMode === 'area' };
+  }
+  if ((loaded as any).radialSelectionMode === 'angle') {
+    config = { ...config, radialSelectionMode: 'area' };
   }
 
   /**

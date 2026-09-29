@@ -66,6 +66,7 @@ const { fullBleedBounds } = require("./full-bleed-bounds.cjs");
 const { titleFromHtmlBuffer } = require("./page-title.cjs");
 const { decidePendingUpdate } = require("./pending-update.cjs");
 const { createSystemStatusService } = require("./system-status.cjs");
+const { inspectDroppedPath } = require("./drop-inspect.cjs");
 const crypto = require("crypto");
 const { GlobalKeyboardListener } = require("node-global-key-listener");
 const http = require("http");
@@ -194,12 +195,10 @@ const scheduleLogFlush = () => {
 };
 
 /**
- * Mouse buttons accepted as a trigger. Left (0x01) and right (0x02) are deliberately out: watching
- * them globally would collide with the primary click and the context menu of the whole system. The
- * side buttons (X1/X2) are free in the overwhelming majority of applications.
+ * The trigger binding, parsed by the grammar `backend/mouse-trigger.cjs` shares with the renderer:
+ * a button plus the modifiers held with it. Left and right are accepted here — the parser refuses
+ * them BARE, so watching one can never cost the system its primary click or its context menu.
  */
-const MOUSE_TRIGGER_VK = { middle: 0x04, x1: 0x05, x2: 0x06 };
-
 /** Accelerator → evdev key code + modifier mask for the helper's passive hotkey watch. */
 function acceleratorToEvdevCode(accelerator) {
   const key = String(accelerator || "")
@@ -236,7 +235,13 @@ function acceleratorToModMask(accelerator) {
   }
   return mask;
 }
-const MOUSE_TRIGGER_BUTTONS = Object.keys(MOUSE_TRIGGER_VK);
+const {
+  MOUSE_TRIGGER_VK,
+  DEFAULT_MOUSE_TRIGGER,
+  parseMouseTrigger,
+  normalizeMouseTrigger,
+  mouseTriggerAllowsHold,
+} = require("./mouse-trigger.cjs");
 
 /**
  * Parse a shortcut string to detect if it contains a mouse button trigger.
@@ -1158,6 +1163,16 @@ const installPendingUpdateAndExit = () => {
   return true;
 };
 
+/**
+ * Did Windows start this copy at login, or did a person open it?
+ *
+ * `getLoginItemSettings().wasOpenedAtLogin` is documented macOS-only — on Windows it never comes
+ * back true, so the answer has to travel with the launch itself. `syncLoginItemSettings` registers
+ * the Run entry WITH this argument, which is what makes reading it back here authoritative.
+ */
+const LOGIN_LAUNCH_ARG = "--opened-at-login";
+const startedAtLogin = process.argv.includes(LOGIN_LAUNCH_ARG);
+
 // Single instance: prevents two Zenith processes when login startup is slow and the user launches manually.
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -1323,6 +1338,18 @@ let isAppQuitting = false;
  * The function lives inside `app.whenReady`; this reference is how `will-quit` reaches it.
  */
 let stopMouseHookForShutdown = () => {};
+/**
+ * The trigger is off for as long as Settings is asking which button to bind to.
+ *
+ * It has to be: the hook SWALLOWS the bound button system-wide, so with it armed the recorder
+ * could never be shown the button it is about to replace — pressing the wheel button over the
+ * recorder would open the wheel instead of being recorded. Same shape as the keyboard side's
+ * `pauseGlobalShortcut`, and the same guarantee: it is one flag, so the resume puts the trigger
+ * back to whatever the config says rather than to whatever it happened to be.
+ */
+let mouseTriggerRecordingPaused = false;
+/** One teardown guard per renderer, so a session of repeated recordings does not stack listeners. */
+const mouseTriggerResumeGuards = new WeakSet();
 let triggerRadialShortcut = () => {};
 let releaseRadialShortcut = () => {};
 let onNativeRecordMouse = null;
@@ -1504,21 +1531,29 @@ async function createWindow() {
     height: initialBounds.height,
     x: initialBounds.x,
     y: initialBounds.y,
-    frame: false, // Keep frameless for transparency
-    titleBarStyle: "hidden", // Hide default title bar but keep controls
+    /**
+     * Frameless but OPAQUE, with the standard resize frame (`thickFrame` defaults on). Windows only
+     * gives Snap, drag-to-top maximize, Snap Layouts and a real maximize to a window that has that
+     * frame, and Electron strips it from every transparent window — transparency here bought the
+     * 12px CSS corners and cost all of that. Windows 11 rounds this window itself; Windows 10
+     * draws it square, like every other window on Windows 10.
+     */
+    frame: false,
+    titleBarStyle: "hidden",
     titleBarOverlay: false,
-    transparent: true,
+    transparent: false,
     alwaysOnTop: false,
     skipTaskbar: false,
     show: false,
     fullscreen: false,
-    hasShadow: false, // Disable native shadow to prevent rectangular ghosting around rounded CSS corners
-    thickFrame: false, // Prevents native resizing border artifacts on Win 11
+    hasShadow: true,
     icon: isDev
       ? path.join(__dirname, "../public/icon.png")
       : path.join(__dirname, "../dist/icon.png"),
-    backgroundColor: "#00000000",
-    backgroundMaterial: "none", // Avoid acrylic blur leaking outside rounded corners
+    /** What shows in a strip the renderer has not painted yet while resizing; the renderer
+     *  swaps it for the light theme's colour (`set-window-background`). */
+    backgroundColor: "#151515",
+    backgroundMaterial: "none",
     webPreferences: {
       preload: path.join(__dirname, "electron-preload.js"),
       nodeIntegration: false,
@@ -1717,6 +1752,8 @@ function setupMainWindow(window) {
   window.webContents.on("did-finish-load", () => {
     diagLog("Renderer: Content finished loading successfully");
     console.log("DEBUG: Content finished loading successfully");
+    // A reload starts React on "windowed"; tell it the truth so the maximized styling matches the window.
+    if (window.isMaximized()) window.webContents.send("window-state", "maximized");
   });
 
   // IPC handler for renderer process logs
@@ -2920,6 +2957,46 @@ function queryWaylandCursor() {
   });
 }
 
+/**
+ * Resolves once no mouse button is held — or after `timeoutMs`, whichever comes first.
+ *
+ * For whoever is about to take the foreground out from under a click that is still in progress.
+ * Windows hands the notification area's right-click to us on the button DOWN, and Electron pops
+ * the tray menu right there, which deactivates the taskbar mid-click; explorer then never gets to
+ * finish its own click, and the release falls through to `Shell_TrayWnd` as a WM_CONTEXTMENU — the
+ * taskbar's own menu, on top of ours. Waiting out the press costs ~20ms and the whole race with it.
+ *
+ * Deliberately does NOT start the helper: with no helper this resolves at once and the behaviour
+ * is exactly what it was before, rather than a tray menu that will not open.
+ */
+function waitForMouseButtonsUp(timeoutMs = 400) {
+  if (process.platform !== "win32") return Promise.resolve();
+  if (!radialMouseBlocker || !radialMouseBlockerReady || !radialMouseBlocker.stdin?.writable) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let timer = null;
+    const finish = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      resolve();
+    };
+    mouseButtonsUpWaiters.push(finish);
+    /** The helper answers at its own deadline too; this only covers a helper that has gone quiet. */
+    timer = setTimeout(finish, timeoutMs + 100);
+    timer.unref?.();
+    try {
+      /** Straight to stdin: `writeRadialMouseBlocker`'s one pending slot belongs to BLOCK/TRIGGER. */
+      radialMouseBlocker.stdin.write(`BUTTONS_UP ${timeoutMs}\n`);
+    } catch (e) {
+      diagLog(`[RadialBlocker] buttons-up failed: ${e.message}`);
+      finish();
+    }
+  });
+}
+
 function setRadialMouseBlocking(bounds, monitorBounds) {
   if (process.platform !== "win32" && process.platform !== "linux") return;
   ensureRadialMouseBlocker();
@@ -2987,11 +3064,17 @@ ipcMain.on("wheel-cursor", (_event, x, y) => {
  * button back to the window underneath while the press is still going. They travel in the command
  * instead of being written in both languages — main is what owns the numbers, as it already does
  * with `slop`.
+ *
+ * `modMask` is the modifiers the binding asks for (Ctrl 1, Alt 2, Shift 4, Win 8). Zero means the
+ * button alone. With one set, a press without those modifiers is not ours and reaches the window
+ * underneath untouched — which is what makes left and right bindable at all.
  */
-function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragPx) {
+function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragPx, modMask) {
   if (process.platform !== "win32" && process.platform !== "linux") return;
   ensureRadialMouseBlocker();
   if (process.platform === "linux") {
+    /** The evdev TRIGGER carries menuMin + dbl instead of modMask: modifier-based recorded
+     * triggers are a Windows capability for now — the helper watches bare buttons only. */
     const menuMinMs = Math.max(0, Number(menuHoldMinMsSetting) || 0);
     const dblMs = dblClickOpensMenuSetting ? DOUBLE_CLICK_WINDOW_MS : 0;
     writeRadialMouseBlocker(
@@ -2999,7 +3082,7 @@ function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragP
     );
   } else {
     /** The Windows helper parses at most 6 fields — extra ones make it DROP the whole command. */
-    writeRadialMouseBlocker(`TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx}`);
+    writeRadialMouseBlocker(`TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx} ${modMask || 0}`);
   }
 }
 
@@ -3925,7 +4008,16 @@ app.whenReady().then(async () => {
     menuHoldMinMs: 350,
     mouseTriggerMode: "click",
     mouseTriggerButton: "middle",
-    openAtLogin: false,
+    /**
+     * On — for installs that begin with it.
+     *
+     * A launcher that has to be started by hand is not there when the wheel is reached for, so a
+     * new install signs in ready. It costs nothing visible: a login start stays in the tray (see
+     * `LOGIN_LAUNCH_ARG`) rather than opening Settings the way a manual launch does.
+     *
+     * Profiles that predate this default are deliberately left alone — see `loadSettings`.
+     */
+    openAtLogin: true,
   };
 
   const syncLoginItemSettings = (openAtLogin) => {
@@ -3970,12 +4062,32 @@ app.whenReady().then(async () => {
     return;
   }
     try {
+      /**
+       * Never from an unpackaged run. The exe is the shared development Electron binary there, and
+       * a Run entry pointing at it starts a checkout — or a throwaway smoke-test profile — with
+       * Windows on the machine of whoever last launched one. Only an installed Rovyl owns a
+       * startup entry; the setting itself is still stored and still shown.
+       */
+      if (!isPackagedBuild) {
+        diagLog(`[Startup] Unpackaged run: login item untouched (openAtLogin = ${openAtLogin}).`);
+        return;
+      }
       if (typeof openAtLogin === "boolean") {
-        const currentLoginSettings = app.getLoginItemSettings();
+        /**
+         * Asked WITH the path and the argument: on Windows that reports whether the registered
+         * entry is this exact command line, so a Run key left by an older version — same exe, no
+         * argument — reads as absent and is rewritten once. Without that, Rovyl would go on
+         * starting at login with nothing to tell that login apart from a double-click.
+         */
+        const loginItem = {
+          path: app.getPath("exe"),
+          args: [LOGIN_LAUNCH_ARG],
+        };
+        const currentLoginSettings = app.getLoginItemSettings(loginItem);
         if (currentLoginSettings.openAtLogin !== openAtLogin) {
           app.setLoginItemSettings({
+            ...loginItem,
             openAtLogin: openAtLogin,
-            path: app.getPath("exe"),
           });
           console.log(
             `Login item settings synced: openAtLogin = ${openAtLogin}`,
@@ -3987,12 +4099,29 @@ app.whenReady().then(async () => {
     }
   };
 
+  /** Set by `loadSettings`: no settings.json on disk, so this run is the install's first. */
+  let isFirstRun = false;
+
   const loadSettings = () => {
     try {
-      if (fs.existsSync(settingsPath)) {
-        const data = fs.readFileSync(settingsPath, "utf-8");
-        currentSettings = { ...currentSettings, ...JSON.parse(data) };
+      if (!fs.existsSync(settingsPath)) {
+        isFirstRun = true;
+        return;
       }
+      const data = fs.readFileSync(settingsPath, "utf-8");
+      const stored = JSON.parse(data);
+      if (!stored || typeof stored !== "object") return;
+      currentSettings = { ...currentSettings, ...stored };
+      /**
+       * "Start with Windows" is on by default, but only for installs that begin that way. A
+       * settings file written before the default changed belongs to somebody who has been using
+       * Rovyl without it, and nobody should find a new entry in their startup list because they
+       * updated.
+       *
+       * The test is the ABSENT key, not the value: an explicit `false` is already carried over by
+       * the spread, and every file this version writes names the key either way.
+       */
+      if (!("openAtLogin" in stored)) currentSettings.openAtLogin = false;
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -4033,8 +4162,9 @@ app.whenReady().then(async () => {
     if (ui.mouseTriggerMode === "click" || ui.mouseTriggerMode === "hold") {
       currentSettings.mouseTriggerMode = ui.mouseTriggerMode;
     }
-    if (MOUSE_TRIGGER_BUTTONS.includes(ui.mouseTriggerButton)) {
-      currentSettings.mouseTriggerButton = ui.mouseTriggerButton;
+    const uiTriggerButton = normalizeMouseTrigger(ui.mouseTriggerButton);
+    if (uiTriggerButton) {
+      currentSettings.mouseTriggerButton = uiTriggerButton;
     }
     if (typeof ui.openAtLogin === "boolean") {
       currentSettings.openAtLogin = ui.openAtLogin;
@@ -4063,9 +4193,8 @@ app.whenReady().then(async () => {
     middleClickOpensMenu: true,
         mouseTriggerMode:
           currentSettings.mouseTriggerMode === "hold" ? "hold" : "click",
-        mouseTriggerButton: MOUSE_TRIGGER_BUTTONS.includes(currentSettings.mouseTriggerButton)
-          ? currentSettings.mouseTriggerButton
-          : "middle",
+        mouseTriggerButton:
+          normalizeMouseTrigger(currentSettings.mouseTriggerButton) || DEFAULT_MOUSE_TRIGGER,
         openAtLogin: !!currentSettings.openAtLogin,
       };
       fs.writeFileSync(settingsPath, JSON.stringify(slim, null, 2));
@@ -4154,6 +4283,14 @@ app.whenReady().then(async () => {
     })();
   }, 60_000).unref?.();
 
+  /**
+   * First run of a fresh install: write the defaults out now, so starting with Windows is a stored
+   * choice from this moment on. Without it the default would be re-derived on every launch until
+   * something else happened to save, and this file is also what tells the NEXT version that this
+   * profile has already answered the question.
+   */
+  if (isFirstRun) saveSettings({});
+
   if (currentSettings.openAtLogin !== undefined) {
     syncLoginItemSettings(currentSettings.openAtLogin);
   }
@@ -4169,9 +4306,8 @@ app.whenReady().then(async () => {
       currentSettings.mouseTriggerMode === "hold" ? "hold" : "click",
     shortcutTriggerMode:
       currentSettings.shortcutTriggerMode === "hold" ? "hold" : "toggle",
-    mouseTriggerButton: MOUSE_TRIGGER_BUTTONS.includes(currentSettings.mouseTriggerButton)
-      ? currentSettings.mouseTriggerButton
-      : "middle",
+    mouseTriggerButton:
+      normalizeMouseTrigger(currentSettings.mouseTriggerButton) || DEFAULT_MOUSE_TRIGGER,
     performanceMode: false,
   };
 
@@ -4208,8 +4344,9 @@ app.whenReady().then(async () => {
       if (fc.shortcutTriggerMode === "click" || fc.shortcutTriggerMode === "hold" || fc.shortcutTriggerMode === "toggle") {
         cachedRadialFlags.shortcutTriggerMode = fc.shortcutTriggerMode;
       }
-      if (MOUSE_TRIGGER_BUTTONS.includes(fc.mouseTriggerButton)) {
-        cachedRadialFlags.mouseTriggerButton = fc.mouseTriggerButton;
+      const fileTriggerButton = normalizeMouseTrigger(fc.mouseTriggerButton);
+      if (fileTriggerButton) {
+        cachedRadialFlags.mouseTriggerButton = fileTriggerButton;
       }
       /**
        * Seeded from disk, not awaited from the renderer. The global shortcut is registered before
@@ -4479,8 +4616,9 @@ app.whenReady().then(async () => {
     if (payload.mouseTriggerMode === "click" || payload.mouseTriggerMode === "hold") {
       cachedRadialFlags.mouseTriggerMode = payload.mouseTriggerMode;
     }
-    if (MOUSE_TRIGGER_BUTTONS.includes(payload.mouseTriggerButton)) {
-      cachedRadialFlags.mouseTriggerButton = payload.mouseTriggerButton;
+    const payloadTriggerButton = normalizeMouseTrigger(payload.mouseTriggerButton);
+    if (payloadTriggerButton) {
+      cachedRadialFlags.mouseTriggerButton = payloadTriggerButton;
     }
     applyRadialMonitorSetting(payload.radialMonitor);
     applyRadialPlacementSetting(payload.radialPlacement);
@@ -4517,8 +4655,9 @@ app.whenReady().then(async () => {
       if (ui.mouseTriggerMode === "click" || ui.mouseTriggerMode === "hold") {
         cachedRadialFlags.mouseTriggerMode = ui.mouseTriggerMode;
       }
-      if (MOUSE_TRIGGER_BUTTONS.includes(ui.mouseTriggerButton)) {
-        cachedRadialFlags.mouseTriggerButton = ui.mouseTriggerButton;
+      const uiTriggerButton = normalizeMouseTrigger(ui.mouseTriggerButton);
+      if (uiTriggerButton) {
+        cachedRadialFlags.mouseTriggerButton = uiTriggerButton;
       }
       /**
        * Belt and braces with `set-radial-viewport`: that effect only fires on the keys it depends
@@ -5708,47 +5847,105 @@ app.whenReady().then(async () => {
   };
 
   const unregisterWorkspaceShortcuts = () => {
-    diagLog("[Shortcuts] Unregistering global numeric workspace shortcuts (1-9)");
-    for (let i = 1; i <= 9; i++) {
-      globalShortcut.unregister(i.toString());
-    }
+    if (workspaceShortcutBindings.length === 0) return;
+    diagLog(
+      `[Shortcuts] Unregistering global workspace keys: ${workspaceShortcutBindings
+        .map((b) => b.key)
+        .join(", ")}`,
+    );
+    workspaceShortcutBindings.forEach(({ key }) => {
+      try {
+        globalShortcut.unregister(key);
+      } catch (e) {
+        diagLog(`[Shortcuts] Exception unregistering workspace key ${key}: ${e.message}`);
+      }
+    });
   };
 
   // PERF: Workspace shortcuts registered via permanent listeners — flag gates IPC send
   // We extract this to a function so it can be re-called when main shortcuts are refreshed (unregisterAll)
   const registerWorkspaceShortcuts = () => {
-    diagLog("[Shortcuts] Registering global numeric workspace shortcuts (1-9)");
-    // RESTORED: Registration of 1-9 as global shortcuts is the ONLY reliable way
-    // to capture keys when the Zenith window fails to take keyboard focus away 
+    if (workspaceShortcutBindings.length === 0) return;
+    diagLog(
+      `[Shortcuts] Registering global workspace keys: ${workspaceShortcutBindings
+        .map((b) => `${b.key}→${b.index}`)
+        .join(", ")}`,
+    );
+    // RESTORED: Registration of these as global shortcuts is the ONLY reliable way
+    // to capture keys when the Zenith window fails to take keyboard focus away
     // from a background text field.
-    for (let i = 1; i <= 9; i++) {
+    workspaceShortcutBindings.forEach(({ key, index }) => {
       try {
         // Unregister first if already registered to avoid double-registration errors (though Electron handles it gracefully)
-        if (globalShortcut.isRegistered(i.toString())) {
-            globalShortcut.unregister(i.toString());
+        if (globalShortcut.isRegistered(key)) {
+            globalShortcut.unregister(key);
         }
 
-        const success = globalShortcut.register(i.toString(), () => {
-          diagLog(`[Shortcuts] Global numeric shortcut triggered: ${i}`);
+        const success = globalShortcut.register(key, () => {
+          diagLog(`[Shortcuts] Global workspace key triggered: ${key}`);
           if (workspaceShortcutsMenuOpen) {
-            diagLog(`[Shortcuts] Sending switch-workspace IPC: ${i - 1}`);
-            sendToOverlay("switch-workspace", i - 1);
+            diagLog(`[Shortcuts] Sending switch-workspace IPC: ${index}`);
+            sendToOverlay("switch-workspace", index);
           }
         });
-        if (!success) diagLog(`[Shortcuts] Failed to register workspace shortcut ${i}`);
+        /**
+         * A recorded key Windows will not hand over is not fatal. The wheel keeps its own keydown
+         * handler for exactly these bindings, so the key still works whenever the radial holds
+         * focus — which is the common case. Only the focus-stolen case is lost, and losing it
+         * quietly beats refusing a key the user chose.
+         */
+        if (!success) diagLog(`[Shortcuts] Failed to register workspace key ${key}`);
       } catch (e) {
-        diagLog(`[Shortcuts] Exception registering workspace shortcut ${i}: ${e.message}`);
+        diagLog(`[Shortcuts] Exception registering workspace key ${key}: ${e.message}`);
       }
-    }
+    });
   };
 
   let workspaceShortcutsMenuOpen = false;
   /**
-   * When false, 1–9 are not registered while the radial is open — either because the workspace
-   * switcher is the picker wheel, or because the wheel has claimed the digits for launching by
-   * number. See the `set-workspace-shortcuts` handler.
+   * False only for a renderer too old to send its key list while quick launch is claiming the
+   * digits — back then the workspace keys WERE the digits, so the claim silenced all of them.
+   * A current renderer sends the list with the claimed digits already removed, and this stays true.
    */
   let workspaceShortcutsUseNumeric = true;
+  /**
+   * Which key belongs to which workspace, as the renderer computed it (`workspaceKeyBindings`).
+   * It used to be the hardcoded 1–9 against the position; a workspace key can now be any single
+   * key, so the list has to come from the config rather than be assumed.
+   *
+   * Seeded with that old assumption so the wheel behaves exactly as it shipped until the first
+   * `set-workspace-shortcuts` arrives — which it does before the wheel can open.
+   */
+  let workspaceShortcutBindings = Array.from({ length: 9 }, (_, i) => ({
+    key: String(i + 1),
+    index: i,
+  }));
+
+  /** The renderer's array, taken only if every entry is a single key pointing at a real index. */
+  const sanitizeWorkspaceBindings = (keys, numberKeysClaimed) => {
+    if (!Array.isArray(keys)) return null;
+    const seen = new Set();
+    const clean = [];
+    for (const entry of keys) {
+      if (!entry || typeof entry !== "object") continue;
+      const key = typeof entry.key === "string" ? entry.key.trim() : "";
+      const index = Number(entry.index);
+      /** One character, the same rule `normalizeWorkspaceKey` enforces on the way in. */
+      if (Array.from(key).length !== 1) continue;
+      if (!Number.isInteger(index) || index < 0) continue;
+      /**
+       * Quick launch owns the digits, and a registered global shortcut never reaches the renderer
+       * — so registering one here would mean pressing 2 switches workspace while the wheel waits
+       * for a keystroke that was eaten upstairs. The renderer strips them too; this is the same
+       * rule stated where the registration happens, so nothing has to trust the send.
+       */
+      if (numberKeysClaimed === true && key >= "0" && key <= "9") continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      clean.push({ key, index });
+    }
+    return clean;
+  };
 
   // Register initial shortcut
   registerGlobalShortcut();
@@ -5777,8 +5974,9 @@ app.whenReady().then(async () => {
     if (settings.shortcutTriggerMode === "click" || settings.shortcutTriggerMode === "hold" || settings.shortcutTriggerMode === "toggle") {
       patch.shortcutTriggerMode = settings.shortcutTriggerMode;
     }
-    if (MOUSE_TRIGGER_BUTTONS.includes(settings.mouseTriggerButton)) {
-      patch.mouseTriggerButton = settings.mouseTriggerButton;
+    const settingsTriggerButton = normalizeMouseTrigger(settings.mouseTriggerButton);
+    if (settingsTriggerButton) {
+      patch.mouseTriggerButton = settingsTriggerButton;
     }
     if (typeof settings.openAtLogin === "boolean") patch.openAtLogin = settings.openAtLogin;
     if (Array.isArray(settings.workspaces)) patch.workspaces = settings.workspaces;
@@ -5998,6 +6196,41 @@ app.whenReady().then(async () => {
   ipcMain.on("stop-shortcut-recording", () => {
     diagLog("[Shortcuts] Stopping global recording session.");
     stopShortcutRecording();
+  });
+
+  /**
+   * Settings is about to record a mouse button, so the trigger lets go of the one it holds.
+   *
+   * The recording itself happens in the renderer — the settings window is what the hand is over,
+   * and a DOM `mousedown` names every button Windows reports, modifiers included. All main has to
+   * do is stop eating the one button that would otherwise never arrive.
+   */
+  ipcMain.on("pause-mouse-trigger", (event) => {
+    if (mouseTriggerRecordingPaused) return;
+    mouseTriggerRecordingPaused = true;
+    diagLog("[MouseHook] Trigger released for the settings recorder.");
+    /**
+     * The resume normally comes from the recorder's own cleanup. A renderer that is reloaded or
+     * torn down mid-recording never sends it, and the cost of that is a mouse trigger that is
+     * silently off until the next restart — so the window going away is a resume too.
+     */
+    if (!mouseTriggerResumeGuards.has(event.sender)) {
+      mouseTriggerResumeGuards.add(event.sender);
+      event.sender.once("destroyed", () => {
+        if (!mouseTriggerRecordingPaused) return;
+        mouseTriggerRecordingPaused = false;
+        diagLog("[MouseHook] Trigger re-armed: the recorder's window went away.");
+        syncMouseHookState();
+      });
+    }
+    syncMouseHookState();
+  });
+
+  ipcMain.on("resume-mouse-trigger", () => {
+    if (!mouseTriggerRecordingPaused) return;
+    mouseTriggerRecordingPaused = false;
+    diagLog("[MouseHook] Trigger re-armed after recording.");
+    syncMouseHookState();
   });
 
   /** Verify Google ID token (Sign in with Google / zenithos.online auth page). */
@@ -6520,20 +6753,36 @@ app.whenReady().then(async () => {
     }, 5 * 60 * 1000);
   });
 
-  ipcMain.on("set-workspace-shortcuts", (event, isOpen, mode, numberKeysClaimed) => {
+  ipcMain.on("set-workspace-shortcuts", (event, isOpen, numberKeysClaimed, keys) => {
+    const nextBindings = sanitizeWorkspaceBindings(keys, numberKeysClaimed);
     /**
-     * Two features cannot own one key. A registered global shortcut is consumed by main and never
-     * reaches the renderer, so while the wheel is launching by number (`radialNumberLaunch`) the
-     * digits have to stay UNregistered — otherwise pressing 2 switches workspace and the wheel
-     * never hears the keystroke it was told to act on.
+     * Two features cannot own one key, and with a list in hand that is already settled: the digits
+     * quick launch claims were dropped as the list was read. Without one — an older renderer, which
+     * only ever meant the positional 1–9 — the claim still has to be applied to the whole set.
      */
-    const useNumeric = mode !== "picker" && numberKeysClaimed !== true;
+    const useNumeric = nextBindings !== null || numberKeysClaimed !== true;
+    /**
+     * A send without the list is that older renderer: keep whatever is already held rather than
+     * dropping to no bindings at all, which would leave the wheel with no keys.
+     */
+    const bindings = nextBindings || workspaceShortcutBindings;
+    const sameBindings =
+      bindings.length === workspaceShortcutBindings.length &&
+      bindings.every((b, i) => b.key === workspaceShortcutBindings[i].key && b.index === workspaceShortcutBindings[i].index);
     if (
       workspaceShortcutsMenuOpen === isOpen &&
-      workspaceShortcutsUseNumeric === useNumeric
+      workspaceShortcutsUseNumeric === useNumeric &&
+      sameBindings
     ) {
       return;
     }
+    /**
+     * Release the OLD keys before adopting the new ones. A workspace re-keyed from 2 to K while
+     * the wheel was open would otherwise leave 2 registered forever, swallowing that digit system
+     * wide — `unregisterWorkspaceShortcuts` only knows the list it is holding.
+     */
+    if (!sameBindings) unregisterWorkspaceShortcuts();
+    workspaceShortcutBindings = bindings;
     workspaceShortcutsMenuOpen = isOpen;
     workspaceShortcutsUseNumeric = useNumeric;
     if (!isOpen) {
@@ -6691,10 +6940,21 @@ app.whenReady().then(async () => {
     if (mouseHook) return;
     activeMouseHookButton = cachedRadialFlags.mouseTriggerButton;
     activeMouseHookMode = cachedRadialFlags.mouseTriggerMode;
-    const virtualKey = MOUSE_TRIGGER_VK[activeMouseHookButton] ?? MOUSE_TRIGGER_VK.middle;
-    const mode = cachedRadialFlags.mouseTriggerMode === "click" ? "click" : "hold";
+    /** A binding the parser refuses is a binding the hook must not arm: fall back to the default. */
+    const binding =
+      parseMouseTrigger(activeMouseHookButton) || parseMouseTrigger(DEFAULT_MOUSE_TRIGGER);
+    /**
+     * Left and right are click-only, and Settings hides the choice for them. The coercion is here
+     * as well because a config can be hand edited, or carry a `hold` left behind by the button it
+     * was set for — and arming hold on the primary button means holding it down for the length of
+     * every gesture, which the rest of Windows reads as a drag.
+     */
+    const mode =
+      mouseTriggerAllowsHold(binding.token) && cachedRadialFlags.mouseTriggerMode === "hold"
+        ? "hold"
+        : "click";
     diagLog(
-      `Mouse trigger captured by the hook (${activeMouseHookButton}, ${mode}, slop ${TRIGGER_PASSTHROUGH_SLOP_PX}px)`,
+      `Mouse trigger captured by the hook (${binding.token}, ${mode}, slop ${TRIGGER_PASSTHROUGH_SLOP_PX}px)`,
     );
     /** "Active" marker: there is no process of its own any more, but the rest of the code tests the truth of this. */
     mouseHook = { active: true };
@@ -6707,11 +6967,12 @@ app.whenReady().then(async () => {
      * the click/hold edge, so both classify identically.
      */
     setRadialTriggerCapture(
-      virtualKey,
+      binding.vk,
       mode,
       TRIGGER_PASSTHROUGH_SLOP_PX,
       MMB_CLICK_BACKSTOP_MS,
       MMB_CLICK_DRAG_PX,
+      binding.modMask,
     );
 
     handleTriggerData = async (data) => {
@@ -6954,7 +7215,7 @@ app.whenReady().then(async () => {
      * hook — every mouse event in the system goes through it, serialized. A 15 ms watchdog that
      * called `Process.GetProcessById` cost 12 ms per tick and stuttered the whole screen.
      */
-    const wantHook = cachedRadialFlags.enableMouseTrigger;
+    const wantHook = cachedRadialFlags.enableMouseTrigger && !mouseTriggerRecordingPaused;
     /** Changing button requires restarting the probe: the VK is passed at process startup. */
     /** Button OR mode: both travel in the TRIGGER command, so either one requires re-arming the capture. */
     if (
@@ -8824,11 +9085,24 @@ function stealForegroundForOverlay() {
  * two cases.
  */
 ipcMain.handle("was-opened-at-login", () => {
+  /** The argument first: `wasOpenedAtLogin` is macOS-only and answers false here whatever happened. */
+  if (startedAtLogin) return true;
   try {
     return app.getLoginItemSettings().wasOpenedAtLogin === true;
   } catch (e) {
     return false;
   }
+});
+
+/**
+ * Read once by the preload, before the renderer's first paint.
+ *
+ * Synchronous on purpose: Settings decides whether to open itself in its very first render, and an
+ * answer that arrives a tick later is a window that appears at every Windows login and then takes
+ * itself away again.
+ */
+ipcMain.on("get-launch-flags", (event) => {
+  event.returnValue = { openedAtLogin: startedAtLogin };
 });
 
 ipcMain.handle("get-app-version", () => app.getVersion());
@@ -9230,6 +9504,12 @@ ipcMain.on("minimize-window", () => {
   }
 });
 
+ipcMain.on("set-window-background", (event, color) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) return;
+  mainWindow.setBackgroundColor(color);
+});
+
 ipcMain.on("toggle-maximize", () => {
   if (!mainWindow) return;
   if (mainWindow.isMaximized()) {
@@ -9391,6 +9671,37 @@ ipcMain.handle("select-folder", async () => {
     diagLog(`[select-folder] ${e.message}`);
     return null;
   }
+});
+
+/**
+ * IPC: what a set of dropped paths actually are.
+ *
+ * Drag-and-drop hands the renderer a string and nothing else. Whether it names a directory, and
+ * what a `.lnk` or a `.url` points at, are questions for the disk — which the settings window
+ * cannot touch. Answered in a batch because a drop is usually several files at once, and a round
+ * trip each would have the wheel filling in visibly staggered order.
+ *
+ * Capped, and every path answered independently: one unreadable target must not cost the others,
+ * because a drop has no dialog in which to report it. The reply is one entry PER INPUT, `null`
+ * where nothing could be said — the renderer pairs them up by position, and a skipped element
+ * would silently shift every answer after it onto the wrong file.
+ */
+const MAX_INSPECTED_DROP_PATHS = 64;
+
+ipcMain.handle("inspect-drop-paths", async (_event, paths) => {
+  if (!Array.isArray(paths)) return [];
+  return paths.slice(0, MAX_INSPECTED_DROP_PATHS).map((candidate) => {
+    try {
+      return (
+        inspectDroppedPath(candidate, {
+          readShortcutLink: (target) => shell.readShortcutLink(target),
+        }) || null
+      );
+    } catch (e) {
+      diagLog(`[inspect-drop-paths] ${e.message}`);
+      return null;
+    }
+  });
 });
 
 /* ── Custom icons ─────────────────────────────────────────────────────────────────────────────

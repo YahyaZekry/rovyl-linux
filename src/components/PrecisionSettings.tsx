@@ -21,7 +21,9 @@ import {
   File as FileGlyph,
   FilePlus2,
   FolderOpen,
+  Github,
   Globe2,
+  HelpCircle,
   GripVertical,
   Image as ImageGlyph,
   Loader2,
@@ -32,7 +34,9 @@ import {
   Mouse,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
+  Circle,
   Search,
   Palette,
   Settings,
@@ -77,6 +81,15 @@ import '../fonts-display.css';
 import { NativeAppIcon, useInstalledApps, clearInstalledAppsMemory, type InstalledApp } from './installedApps';
 import { radialCrowding } from '../utils/workspaceRadial';
 import { startMenuAppIdToLaunchCommand } from '../utils/windowsLaunchCommand';
+import { openExternalSiteUrl } from '../utils/openExternalSiteUrl';
+import {
+  dropEntriesFrom,
+  guessPathKind,
+  isNonWebScheme,
+  labelFromDroppedPath,
+  type DropPayload,
+  type InspectedDropPath,
+} from '../utils/droppedShortcut';
 import { WheelPreview, MENU_RADIUS_RANGE } from './WheelPreview';
 import { DockShortcutsManager } from './DockShortcuts';
 import { DockPositionPicker } from './DockPositionPicker';
@@ -87,7 +100,29 @@ import {
   normalizeBackKey,
   rejectBackKey,
 } from '../constants/radialBackKey';
-import { nextTypeAheadBuffer, selectMenuPlacement, typeAheadIndex } from './selectMenu';
+import {
+  DEFAULT_MOUSE_TRIGGER,
+  formatMouseTrigger,
+  mouseTriggerAllowsHold,
+  mouseTriggerChips,
+  mouseTriggerFromEvent,
+  normalizeMouseTrigger,
+  rejectMouseTrigger,
+} from '../constants/mouseTrigger';
+import {
+  WORKSPACE_KEY_NONE,
+  type WorkspaceKeyClash,
+  clearWorkspaceKeyClash,
+  findWorkspaceKeyClash,
+  isDefaultWorkspaceKey,
+  normalizeWorkspaceKey,
+  positionalWorkspaceKey,
+  rejectWorkspaceKey,
+  workspaceKeyAt,
+  workspaceKeyBindings,
+} from '../constants/workspaceHotkey';
+import { helpTipPlacement, nextTypeAheadBuffer, selectMenuPlacement, typeAheadIndex } from './selectMenu';
+import type { TipPlacement } from './selectMenu';
 import { LANGUAGES, normalizeLanguage, translations, useTranslation } from '../i18n/useTranslation';
 
 interface PrecisionSettingsProps {
@@ -164,7 +199,7 @@ interface SettingItem {
   group: string;
   title: string;
   description?: string;
-  kind: 'bool' | 'range' | 'segmented' | 'select' | 'dockPosition' | 'open' | 'action' | 'color';
+  kind: 'bool' | 'range' | 'segmented' | 'select' | 'dockPosition' | 'open' | 'action' | 'color' | 'mouseButton';
   enabled?: boolean;
   value?: string;
   min?: number;
@@ -172,7 +207,11 @@ interface SettingItem {
   step?: number;
   raw?: number;
   format?: (value: number) => string;
-  choices?: Array<{ value: string; label: string; hint?: string }>;
+  /**
+   * `hint` is support text drawn beside the label; `help` is a sentence too long to draw at
+   * all, reachable from the option's own help affordance.
+   */
+  choices?: Array<{ value: string; label: string; hint?: string; help?: string }>;
   current?: string;
   /** `dockPosition` only: the other dock's region, drawn faint so a shared corner is a choice. */
   occupied?: { position: DockPosition; label: string };
@@ -520,7 +559,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
       description,
       kind: 'action' as const,
       actionLabel: checking ? 'Checking…' : updateInfo.state === 'error' ? 'Try again' : 'Check now',
-      actionIcon: ArrowDownToLine,
+      actionIcon: RefreshCw,
       actionDisabled: checking,
       onRun: () => void runUpdateCheck(),
     };
@@ -895,10 +934,10 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
 
     const keyboardTriggerOn = config.enableKeyboardTrigger !== false;
     const mouseTriggerOn = config.enableMouseTrigger !== false;
+    /** Left and right are click-only — see `mouseTriggerAllowsHold`. */
+    const triggerAllowsHold = mouseTriggerAllowsHold(config.mouseTriggerButton ?? DEFAULT_MOUSE_TRIGGER);
     const numberLaunchOn = config.radialNumberLaunch === true;
     const backKey = normalizeBackKey(config.radialBackKey);
-    /** The other claimant on 1–9 — see the description of the quick-launch row. */
-    const workspaceHotkeysOn = (config.workspaceSwitchMode ?? 'picker') !== 'picker';
 
     /**
      * Turning off the last trigger would leave no way in, so the other one comes on in the same
@@ -927,18 +966,33 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
     };
 
     return {
+      /**
+       * One unnamed group: three rows under three headings was a heading per row, which labels
+       * nothing the row's own title does not already say.
+       */
       general: [
         ...(canUpdate ? [{ key: 'update', group: 'Updates', ...updateRow }] : []),
+        {
+          key: 'openAtLogin', configKey: 'openAtLogin', group: '', title: 'Start with Windows',
+          description: 'Rovyl is ready as soon as you sign in to Windows.',
+          kind: 'bool', enabled: Boolean(config.openAtLogin),
+          keywords: 'startup login boot sign in',
+          onToggle: () => {
+            const next = !config.openAtLogin;
+            update('openAtLogin', next);
+            window.electron?.setLoginItemSettings?.({ openAtLogin: next });
+          },
+        },
         {
           /**
            * A select, not the segmented control this was while it held two languages: seven
            * 62px-minimum buttons are ~460px of row, which is wider than the control column and
            * would wrap into a block of chips no eye can scan.
            *
-           * The group name stays the English "Language" on purpose — it is the one string in this
+           * The English "Language" stays in the keywords on purpose — it is the one string in this
            * panel that has to stay findable by someone who cannot read the rest of it.
            */
-          key: 'language', configKey: 'language', group: 'Language', title: t('language'),
+          key: 'language', configKey: 'language', group: '', title: t('language'),
           description: t('languageDesc'),
           kind: 'select', current: normalizeLanguage(config.language),
           choices: LANGUAGES.map((entry) => ({
@@ -952,11 +1006,13 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            * which every table already carries under the `language` key.
            */
           keywords: [
+            'Language',
             ...LANGUAGES.map((entry) => `${entry.label} ${entry.english}`),
             ...Object.values(translations).map((table) => table.language),
           ].join(' '),
           onChange: (value) => update('language', value as UIConfig['language']),
         },
+        ...(canUpdate ? [{ key: 'update', group: '', keywords: 'updates version', ...updateRow }] : []),
         {
           key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu', group: 'Activation',
           title: 'Menu on middle click over apps',
@@ -980,11 +1036,11 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           },
         },
         {
-          key: 'workspaceSwitchMode', configKey: 'workspaceSwitchMode', group: 'Workspaces', title: 'Workspace switching',
-          description: 'Use the visual wheel picker or number keys.',
-          kind: 'segmented', current: config.workspaceSwitchMode ?? 'picker',
-          choices: [{ value: 'picker', label: 'Picker' }, { value: 'hotkeys', label: 'Keys' }],
-          onChange: (value) => update('workspaceSwitchMode', value as UIConfig['workspaceSwitchMode']),
+          key: 'github', group: '', title: 'GitHub',
+          description: 'Source code, releases, and issues.',
+          kind: 'action', actionLabel: 'Open', actionIcon: Github,
+          keywords: 'source code repository repo issues releases',
+          onRun: () => openExternalSiteUrl('https://github.com/YahyaZekry/rovyl-linux'),
         },
       ],
       trigger: [
@@ -997,8 +1053,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
          * keyboard side looking like the thing you could not turn off. Two symmetrical switches
          * say the real shape: two independent triggers, either of which can be off.
          *
-         * The trigger's own rows are the ones that collapse. Position and Hands-free below are
-         * about the wheel once it is open, however it got there, so they stay put.
+         * The trigger's own rows are the ones that collapse. Position below is about the wheel
+         * once it is open, however it got there, so it stays put.
          */
         {
           key: 'keyboard', configKey: 'enableKeyboardTrigger', group: 'Keyboard',
@@ -1018,8 +1074,22 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                 key: 'shortcutMode', configKey: 'shortcutTriggerMode' as const, group: 'Keyboard',
                 title: t('shortcutBehavior'),
                 description: t('shortcutBehaviorDesc'),
-                kind: 'segmented', current: config.shortcutTriggerMode ?? 'toggle',
-                choices: [{ value: 'toggle', label: t('shortcutToggle') }, { value: 'hold', label: t('shortcutHold') }],
+                /**
+                 * A dropdown, where every other two-way choice in this panel is a segmented
+                 * control — because the two labels here cannot stay short in every language.
+                 * "Toggle" and "Hold" mean nothing without saying what they do, so the labels
+                 * carried their explanation in parentheses, and two parenthesised sentences side
+                 * by side stretched the control across the row and wrapped in half the locales.
+                 *
+                 * The dropdown separates the two jobs the segmented control was doing at once:
+                 * the label names the mode, and the sentence moves behind each option's help
+                 * affordance, where it is one hover away instead of permanently in the way.
+                 */
+                kind: 'select', current: config.shortcutTriggerMode ?? 'toggle',
+                choices: [
+                  { value: 'toggle', label: t('shortcutToggle'), help: t('shortcutToggleHelp') },
+                  { value: 'hold', label: t('shortcutHold'), help: t('shortcutHoldHelp') },
+                ],
                 onChange: (value) => update('shortcutTriggerMode', value as UIConfig['shortcutTriggerMode']),
               },
             ] as SettingItem[])
@@ -1034,25 +1104,51 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         ...(mouseTriggerOn
           ? ([
               {
+                /**
+                 * Recorded, not chosen from a list.
+                 *
+                 * The list was Wheel / Back / Forward, which is every button Windows has a NAME
+                 * for — and a good deal less than a modern mouse has. Whatever the extra keys on
+                 * yours send, this row binds it by watching you press it, and says back what it
+                 * heard. The only combination it refuses is a bare left or right click, which
+                 * would take the primary click or the context menu from every application at once.
+                 */
                 key: 'mouseButton', configKey: 'mouseTriggerButton' as const, group: 'Mouse', title: 'Trigger button',
-                description: 'Side buttons are usually free; left and right stay with Windows.',
-                kind: 'segmented', current: config.mouseTriggerButton ?? 'middle',
-                choices: [
-                  { value: 'middle', label: 'Wheel' },
-                  { value: 'x1', label: 'Back' },
-                  { value: 'x2', label: 'Forward' },
-                ],
-                onChange: (value) => update('mouseTriggerButton', value as UIConfig['mouseTriggerButton']),
+                description: triggerAllowsHold
+                  ? 'Press Record, then press the button you want. Side buttons are usually free; left and right need Ctrl, Alt, Shift or Win held with them.'
+                  : 'Press Record, then press the button you want. Left and right always open the wheel on the click — holding one down is a drag everywhere else in Windows, so there is no gesture to choose.',
+                kind: 'mouseButton', current: config.mouseTriggerButton ?? DEFAULT_MOUSE_TRIGGER,
+                keywords: 'wheel middle back forward mouse4 mouse5 side button macro record bind',
+                /**
+                 * The gesture travels with the button, in one `setConfig`.
+                 *
+                 * Binding left or right takes Hold off the table, and a stored `hold` that no row
+                 * shows any more is the worst of both: the panel says one thing and the hook does
+                 * another. Writing `click` in the same change means what is on screen is what is
+                 * armed, in every frame.
+                 */
+                onChange: (value) => {
+                  const next = value as string;
+                  setConfig((current) => ({
+                    ...current,
+                    mouseTriggerButton: next,
+                    ...(mouseTriggerAllowsHold(next) ? {} : { mouseTriggerMode: 'click' as const }),
+                  }));
+                },
               },
-              {
-                key: 'mouseMode', configKey: 'mouseTriggerMode' as const, group: 'Mouse', title: 'Gesture behavior',
-                description: 'Click keeps the wheel open; hold runs the selection on release.',
-                kind: 'segmented', current: config.mouseTriggerMode ?? 'click',
-                choices: [{ value: 'click', label: 'Click' }, { value: 'hold', label: 'Hold' }],
-                onChange: (value) => update('mouseTriggerMode', value as UIConfig['mouseTriggerMode']),
-              },
-            ] as SettingItem[])
-          : []),
+              /**
+               * Only where there is a gesture to choose. For left and right the answer is fixed,
+               * and a control with one usable option is a question that should not be asked.
+               */
+              ...(triggerAllowsHold
+                ? ([{
+                    key: 'mouseMode', configKey: 'mouseTriggerMode' as const, group: 'Mouse', title: 'Gesture behavior',
+                    description: 'Click keeps the wheel open; hold runs the selection on release.',
+                    kind: 'segmented', current: config.mouseTriggerMode ?? 'click',
+                    choices: [{ value: 'click', label: 'Click' }, { value: 'hold', label: 'Hold' }],
+                    onChange: (value) => update('mouseTriggerMode', value as UIConfig['mouseTriggerMode']),
+                  }] as SettingItem[])
+                : []),
         ...(config.mouseTriggerMode === 'click'
           ? [range('menuHoldMinMs', 'Mouse', 'Menu hold threshold',
               'Middle clicks shorter than this stay pure native (tab close, link). Holds at least this long open the menu instead.',
@@ -1081,6 +1177,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
               onToggle: () => update('doubleClickOpensMenu', !(config.doubleClickOpensMenu === true)),
             }]
           : []),
+            ] as SettingItem[])
+          : []),
         {
           key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
           /**
@@ -1105,117 +1203,6 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         range('threshold', 'Position', 'Activation zone', 'Cursor distance required to confirm a target.',
           config.activationThreshold, 20, 120, (value) => update('activationThreshold', value), (value) => `${Math.round(value)} px`,
           1, 'activationThreshold'),
-        {
-          key: 'instant', configKey: 'radialInstantActivate', group: 'Hands-free', title: 'Launch without clicking',
-          /** The way OUT belongs in the description: with the pointer hidden, it is not guessable. */
-          description:
-            'Hides the pointer and picks by direction — move toward a target and it opens by itself. Escape closes the wheel without opening anything.',
-          /**
-           * A switch, not a segmented control. Everything binary in this panel is `bool`; a
-           * segmented control is always a choice between named pairs (Picker/Keys, Click/Hold,
-           * Direction/Pointer) and none of them has an "Off". Here the two sides are not a pair:
-           * with this on, clicking goes on working exactly as before, so what exists is the absence
-           * of a feature — which is precisely what the switch says.
-           *
-           * It lives in Activation and not in Appearance: this decides HOW the wheel is driven and
-           * run — it hides the pointer and trades aiming by position for aiming by direction. None
-           * of that is looks, and beside the trigger is where someone goes looking for it.
-           *
-           * Comparing against `'dwell'` also coerces `'swipe'`, reserved in the type and not implemented.
-           */
-          kind: 'bool',
-          enabled: config.radialInstantActivate === 'dwell',
-          onToggle: () =>
-            update(
-              'radialInstantActivate',
-              config.radialInstantActivate === 'dwell' ? 'off' : 'dwell',
-            ),
-        },
-        /**
-         * The two tunings only exist while the gesture does. Leaving them visible with it off is
-         * offering controls that control nothing — and sensitivity, alone in the list, does not
-         * say what it is sensitivity to.
-         */
-        ...(config.radialInstantActivate === 'dwell'
-          ? [
-              {
-                key: 'instantSensitivity',
-                configKey: 'radialInstantSensitivity' as const,
-                group: 'Hands-free',
-                title: 'Direction sensitivity',
-                description:
-                  'How far your hand must travel before that direction is chosen. High picks on the smallest movement.',
-                kind: 'segmented' as const,
-                current: clampDirectionSensitivity(config.radialInstantSensitivity),
-                choices: [
-                  { value: 'low', label: 'Low' },
-                  { value: 'medium', label: 'Medium' },
-                  { value: 'high', label: 'High' },
-                ],
-                onChange: (value: number | string) =>
-                  update('radialInstantSensitivity', value as UIConfig['radialInstantSensitivity']),
-              },
-              range('dwellMs', 'Hands-free', 'Hover time',
-                'How long a target must stay aimed before it opens. Drag to zero and the direction opens the moment it commits.',
-                clampDwellMs(config.radialInstantDwellMs), DWELL_MS_MIN, DWELL_MS_MAX,
-                (value) => update('radialInstantDwellMs', value),
-                /**
-                 * "0 ms" would read as one number among others — and what zero does is not wait
-                 * less, it is to have no wait at all. The word says the behavior; the rest of the
-                 * scale goes on saying the time.
-                 */
-                (value) => (Math.round(value) === 0 ? 'Instant' : `${Math.round(value)} ms`),
-                DWELL_MS_STEP, 'radialInstantDwellMs'),
-            ]
-          : []),
-        {
-          key: 'numberLaunch', configKey: 'radialNumberLaunch', group: 'Number keys',
-          title: 'Quick launch with number keys',
-          /**
-           * Three things have to be here and nowhere else: that there is no Enter (it is the whole
-           * point, and every other keyboard path on the wheel needs one), that the count follows
-           * the wheel rather than any list in this panel, and — when it applies — what it takes
-           * away. `workspaceSwitchMode: 'hotkeys'` also owns 1–9, and a feature that quietly
-           * disables another one is a bug report waiting to be filed.
-           */
-          description:
-            numberLaunchOn && workspaceHotkeysOn
-              ? 'Press 1–9 to run the shortcut in that position — no Enter. The digits are the wheel’s now, so switching workspace by number is off; use the wheel or the scroll wheel instead.'
-              : workspaceHotkeysOn
-                ? 'Press 1–9 to run the shortcut in that position, counting clockwise from the top — no Enter. It takes the number keys away from workspace switching.'
-                : 'Press 1–9 to run the shortcut in that position, counting clockwise from the top — no Enter, no aiming. Also turns on the key that steps back out of a folder.',
-          kind: 'bool', enabled: numberLaunchOn,
-          onToggle: () => update('radialNumberLaunch', !numberLaunchOn),
-        },
-        /** Only while there are numbers to show — same rule as the hands-free tunings above. */
-        ...(numberLaunchOn
-          ? ([
-              {
-                key: 'numberLabels', configKey: 'radialNumberLabels' as const, group: 'Number keys',
-                title: 'Show numbers on the wheel',
-                description:
-                  'Draws each position’s digit on its icon. Turn it off once the wheel is in your hands — the keys go on working.',
-                kind: 'bool', enabled: config.radialNumberLabels !== false,
-                onToggle: () =>
-                  update('radialNumberLabels', config.radialNumberLabels === false),
-              },
-              {
-                key: 'backKey', configKey: 'radialBackKey' as const, group: 'Number keys',
-                title: 'Key to leave a folder',
-                /**
-                 * Where it does NOT work is the whole reason a plain letter is safe to bind, so it
-                 * is the sentence the row leads with. Someone who reads only the title would
-                 * otherwise try it on the root wheel, watch it type into the filter, and file it
-                 * as broken.
-                 */
-                description: backKey
-                  ? `Press ${backKey} inside a folder to step back out, the same as clicking the hub. At the top level it stays an ordinary letter, so searching is unaffected.`
-                  : 'No key assigned. The hub still goes back when clicked, and Backspace still works.',
-                kind: 'open' as const, value: backKey || 'Off',
-                onOpen: () => setEditor({ kind: 'backKey' }),
-              },
-            ] as SettingItem[])
-          : []),
       ],
       appearance: [
         {
@@ -1245,37 +1232,55 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           key: 'aim', configKey: 'radialSelectionMode', group: 'Wheel', title: 'Targeting',
           /**
            * With launch without clicking on there is no pointer on screen, so "aim with the
-           * pointer" is not an option that can exist — the wheel always falls back to sectors by
-           * direction. Saying so here is the minimum: a segmented control that still moves and
-           * changes nothing is worse than a disabled one.
+           * pointer" is not an option that can exist — the wheel falls back to shares of the plane
+           * whatever this says. Saying so here is the minimum: a segmented control that still moves
+           * and changes nothing is worse than a disabled one.
            */
           description:
-            config.radialSelectionMode === 'area'
-              ? 'The wheel is cut into equal wedges — one per shortcut — and the one you point at fills up. Click anywhere inside it.'
-              : config.radialInstantActivate === 'dwell'
-                ? 'Launch without clicking is on, so the wheel always aims by direction — each item owns an equal slice of the screen.'
-                : config.radialSelectionMode === 'cursor'
-                  ? 'Only the icon under the pointer highlights. Release away from every icon to cancel.'
-                  : 'Aim by direction: the slice you point toward highlights from anywhere on screen.',
+            config.radialSelectionMode === 'cursor'
+              ? config.radialInstantActivate === 'dwell'
+                ? 'Launch without clicking hides the pointer and aims by direction, so while it is on every shortcut owns an equal share of the screen regardless of this.'
+                : 'Only the icon under the pointer highlights. Release away from every icon to cancel.'
+              : config.radialAreaWedges === true
+                ? 'The wheel is cut into equal wedges — one per shortcut — and the one you point at fills up. Click anywhere inside it.'
+                : 'Every shortcut owns an equal share of the screen: point toward one and it highlights from anywhere. Click anywhere in its share.',
           kind: 'segmented',
           /**
-           * Area is Direction with the boundaries drawn — same maths, same muscle memory — so the
-           * two sit next to each other and Pointer, which is the one that actually targets
-           * something else, sits at the end.
+           * Two choices, because there were never three. "Direction" was this same targeting with
+           * the wedges left unpainted — the same maths, the same muscle memory, a different
+           * picture — so it stopped being a way of aiming and became the switch below it.
            */
           choices: [
-            { value: 'angle', label: 'Direction' },
             { value: 'area', label: 'Area' },
+            /** Wayland cannot place a window under the pointer (no global cursor query), so
+             * pointer targeting is clamped to the main screen there — the label says so. */
             { value: 'cursor', label: waylandLimited ? 'Pointer (limited by Wayland)' : 'Pointer' },
           ],
-          current:
-            config.radialSelectionMode === 'cursor'
-              ? 'cursor'
-              : config.radialSelectionMode === 'area'
-                ? 'area'
-                : 'angle',
+          current: config.radialSelectionMode === 'cursor' ? 'cursor' : 'area',
           onChange: (value) => update('radialSelectionMode', value as UIConfig['radialSelectionMode']),
         },
+        /**
+         * Only under Area, and only there: Pointer targets the icon rather than the share, so a
+         * wedge drawn for it would promise an area that launches nothing. Hidden rather than
+         * disabled, for the same reason the hands-free tunings are — a control that controls
+         * nothing is worse company for the mode above it than no control at all.
+         */
+        ...(config.radialSelectionMode !== 'cursor'
+          ? [
+              {
+                key: 'areaWedges',
+                configKey: 'radialAreaWedges' as const,
+                group: 'Wheel',
+                title: 'Visible wedges',
+                description:
+                  'Draws the seams between the shares and fills the one you are aiming at with the hover color. Off, the aim is identical and only the icon lights up.',
+                keywords: 'wedge sector slice segment pie gradient seam boundary divider highlight area paint show direction',
+                kind: 'bool' as const,
+                enabled: config.radialAreaWedges === true,
+                onToggle: () => update('radialAreaWedges', config.radialAreaWedges !== true),
+              },
+            ]
+          : []),
         {
           key: 'labels', configKey: 'alwaysShowAppLabels', group: 'Wheel', title: 'Persistent labels',
           description: 'Keep every target name visible.',
@@ -1445,7 +1450,9 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           key: workspace.id,
           group: 'Your workspaces',
           title: workspace.name,
-          description: workspace.hotkey ? `Key ${workspace.hotkey}` : 'Picker / mouse wheel',
+          description: workspaceKeyAt(workspace, index)
+            ? `Key ${workspaceKeyAt(workspace, index)}`
+            : 'Picker / mouse wheel',
           kind: 'open' as const,
           /** Same vocabulary as the editor: current / available / paused. */
           value: config.activeWorkspaceIndex === index ? 'Current' : workspace.enabled ? 'Available' : 'Paused',
@@ -1501,6 +1508,151 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
             onOpen: () => setEditor({ kind: 'blocked' as const }),
           },
         ] : []),
+        {
+          key: 'instant', configKey: 'radialInstantActivate', group: 'Hands-free', title: 'Launch without clicking',
+          /** The way OUT belongs in the description: with the pointer hidden, it is not guessable. */
+          description:
+            'Hides the pointer and picks by direction — move toward a target and it opens by itself. Escape closes the wheel without opening anything.',
+          /**
+           * A switch, not a segmented control. Everything binary in this panel is `bool`; a
+           * segmented control is always a choice between named pairs (Picker/Keys, Click/Hold,
+           * Direction/Pointer) and none of them has an "Off". Here the two sides are not a pair:
+           * with this on, clicking goes on working exactly as before, so what exists is the absence
+           * of a feature — which is precisely what the switch says.
+           *
+           * It lives in Advanced and not in Appearance: this decides HOW the wheel is driven and
+           * run — it hides the pointer and trades aiming by position for aiming by direction. None
+           * of that is looks, and it sits beside the other switch that rewires the open wheel.
+           *
+           * Comparing against `'dwell'` also coerces `'swipe'`, reserved in the type and not implemented.
+           */
+          kind: 'bool',
+          enabled: config.radialInstantActivate === 'dwell',
+          onToggle: () =>
+            update(
+              'radialInstantActivate',
+              config.radialInstantActivate === 'dwell' ? 'off' : 'dwell',
+            ),
+        },
+        /**
+         * The two tunings only exist while the gesture does. Leaving them visible with it off is
+         * offering controls that control nothing — and sensitivity, alone in the list, does not
+         * say what it is sensitivity to.
+         */
+        ...(config.radialInstantActivate === 'dwell'
+          ? [
+              {
+                key: 'instantSensitivity',
+                configKey: 'radialInstantSensitivity' as const,
+                group: 'Hands-free',
+                title: 'Direction sensitivity',
+                description:
+                  'How far your hand must travel before that direction is chosen. High picks on the smallest movement.',
+                kind: 'segmented' as const,
+                current: clampDirectionSensitivity(config.radialInstantSensitivity),
+                choices: [
+                  { value: 'low', label: 'Low' },
+                  { value: 'medium', label: 'Medium' },
+                  { value: 'high', label: 'High' },
+                ],
+                onChange: (value: number | string) =>
+                  update('radialInstantSensitivity', value as UIConfig['radialInstantSensitivity']),
+              },
+              range('dwellMs', 'Hands-free', 'Hover time',
+                'How long a target must stay aimed before it opens. Drag to zero and the direction opens the moment it commits.',
+                clampDwellMs(config.radialInstantDwellMs), DWELL_MS_MIN, DWELL_MS_MAX,
+                (value) => update('radialInstantDwellMs', value),
+                /**
+                 * "0 ms" would read as one number among others — and what zero does is not wait
+                 * less, it is to have no wait at all. The word says the behavior; the rest of the
+                 * scale goes on saying the time.
+                 */
+                (value) => (Math.round(value) === 0 ? 'Instant' : `${Math.round(value)} ms`),
+                DWELL_MS_STEP, 'radialInstantDwellMs'),
+            ]
+          : []),
+        {
+          key: 'numberLaunch', configKey: 'radialNumberLaunch', group: 'Number keys',
+          title: 'Quick launch with number keys',
+          /**
+           * Three things have to be here and nowhere else: that there is no Enter (it is the whole
+           * point, and every other keyboard path on the wheel needs one), that the count follows
+           * the wheel rather than any list in this panel, and what it takes away. The workspace
+           * keys also own 1–9 by default, and a feature that quietly disables another one is a bug
+           * report waiting to be filed.
+           */
+          description: numberLaunchOn
+            ? 'Press 1–9 to run the shortcut in that position — no Enter. The digits are the wheel’s now, so a workspace still on its default number key cannot be reached; give it a letter instead.'
+            : 'Press 1–9 to run the shortcut in that position, counting clockwise from the top — no Enter, no aiming. It takes the number keys away from workspaces still using them, and turns on the key that steps back out of a folder.',
+          kind: 'bool', enabled: numberLaunchOn,
+          onToggle: () => update('radialNumberLaunch', !numberLaunchOn),
+        },
+        /** Only while there are numbers to show: a label switch and a back key with nothing numbered are controls that control nothing. */
+        ...(numberLaunchOn
+          ? ([
+              {
+                key: 'numberLabels', configKey: 'radialNumberLabels' as const, group: 'Number keys',
+                title: 'Show numbers on the wheel',
+                description:
+                  'Draws each position’s digit on its icon. Turn it off once the wheel is in your hands — the keys go on working.',
+                kind: 'bool', enabled: config.radialNumberLabels !== false,
+                onToggle: () =>
+                  update('radialNumberLabels', config.radialNumberLabels === false),
+              },
+              {
+                key: 'backKey', configKey: 'radialBackKey' as const, group: 'Number keys',
+                title: 'Key to leave a folder',
+                /**
+                 * Where it does NOT work is the whole reason a plain letter is safe to bind, so it
+                 * is the sentence the row leads with. Someone who reads only the title would
+                 * otherwise try it on the root wheel, watch it type into the filter, and file it
+                 * as broken.
+                 */
+                description: backKey
+                  ? `Press ${backKey} inside a folder to step back out, the same as clicking the hub. At the top level it stays an ordinary letter, so searching is unaffected.`
+                  : 'No key assigned. The hub still goes back when clicked, and Backspace still works.',
+                kind: 'open' as const, value: backKey || 'Off',
+                onOpen: () => setEditor({ kind: 'backKey' }),
+              },
+            ] as SettingItem[])
+          : []),
+        {
+          key: 'settingsCorner', configKey: 'showSettingsCorner', group: 'Settings shortcut',
+          title: 'Settings button on the wheel',
+          /**
+           * Said with its cost, because it has one that shows: the overlay normally opens as a box
+           * around the wheel, and a corner only means the screen's corner if the window is the
+           * screen. And said with its one exclusion — aiming by direction hides the pointer, so
+           * there is no hand to bring to a corner and the gear is not drawn in that mode.
+           */
+          description:
+            config.radialInstantActivate === 'dwell'
+              ? 'A gear in the corner of the open wheel, one click from these settings. Launch without clicking aims by direction and hides the pointer, so the gear stays off while that is on.'
+              : 'A gear in the corner of the open wheel, one click from these settings. The wheel then opens over the whole screen instead of a box around itself, so the corner is a real one.',
+          kind: 'bool', enabled: config.showSettingsCorner === true,
+          keywords: 'gear cog icon corner open settings preferences shortcut button',
+          onToggle: () => update('showSettingsCorner', !config.showSettingsCorner),
+        },
+        ...(config.showSettingsCorner === true ? [{
+          key: 'settingsCornerPosition', configKey: 'settingsCorner' as const, group: 'Settings shortcut',
+          title: 'Which corner',
+          description: 'Where the gear sits. It steps inboard if the battery or weather pill is already there.',
+          /**
+           * A select: four corner names are ~380px of segmented control, wider than the column,
+           * and the same reason the Language row stopped being one.
+           */
+          kind: 'select' as const,
+          current: SETTINGS_CORNERS.includes(config.settingsCorner as SettingsCorner)
+            ? (config.settingsCorner as SettingsCorner)
+            : 'top-right',
+          choices: [
+            { value: 'top-right', label: 'Top right' },
+            { value: 'top-left', label: 'Top left' },
+            { value: 'bottom-right', label: 'Bottom right' },
+            { value: 'bottom-left', label: 'Bottom left' },
+          ],
+          onChange: (value: number | string) => update('settingsCorner', value as SettingsCorner),
+        }] : []),
         {
           key: 'settingsCorner', configKey: 'showSettingsCorner', group: 'Settings shortcut',
           title: 'Settings button on the wheel',
@@ -1786,8 +1938,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                     <WheelPreview config={config} apps={previewApps} />
                   )}
                   {results.map((group) => (
-                    <section className="zs-group" key={group.name}>
-                      <h2 className="zs-group-title">{group.name}</h2>
+                    <section className="zs-group" key={group.name || 'ungrouped'}>
+                      {group.name && <h2 className="zs-group-title">{group.name}</h2>}
                       {group.name === 'Your workspaces' && !trimmedQuery ? (
                         /** Outside search the grid rules; while searching, the rows go on giving results. */
                         <WorkspaceCards
@@ -2054,6 +2206,10 @@ function SettingRow({
 
         {item.kind === 'select' && <SelectSettingControl item={item} describedBy={describedBy} />}
 
+        {item.kind === 'mouseButton' && (
+          <MouseTriggerControl item={item} describedBy={describedBy} />
+        )}
+
         {item.kind === 'range' && <span className="zs-readout">{item.value}</span>}
 
         {/* The picture answers "where"; this says it in words, for the search and the screen reader. */}
@@ -2156,14 +2312,177 @@ function SettingRow({
   );
 }
 
+/**
+ * The trigger button, bound by pressing it.
+ *
+ * WHY A RECORDER AND NOT A LIST
+ *
+ * The row used to offer Wheel / Back / Forward, which is not a shortlist of the sensible buttons —
+ * it is every button Windows has a name for. A mouse with a thumb cluster, a sniper button or a
+ * tilt wheel sends whatever its driver decided, and the only honest way to ask "which one do you
+ * want" is to watch the person press it.
+ *
+ * WHY THE PRESS IS READ HERE AND NOT IN THE HOOK
+ *
+ * The settings window is what the hand is already over, and a DOM `mousedown` names all five
+ * buttons Windows reports along with the modifiers held. The one thing the renderer cannot do is
+ * see the button that is CURRENTLY bound — the global hook swallows that one system-wide, which is
+ * exactly the button most people will press first — so main lets go of it for as long as the
+ * recorder is open, and takes it back on the way out.
+ */
+function MouseTriggerControl({ item, describedBy }: { item: SettingItem; describedBy?: string }) {
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const onChangeRef = useRef(item.onChange);
+  onChangeRef.current = item.onChange;
+
+  const stop = useCallback(() => {
+    setRecording(false);
+    setError(null);
+  }, []);
+
+  useEffect(() => {
+    if (!recording) return;
+    window.electron?.pauseMouseTrigger?.();
+
+    /**
+     * Capture, and on the DOWN: by the time a `click` exists the button under the pointer has
+     * already been pressed, and a middle press has already started Windows' autoscroll.
+     */
+    const onDown = (event: MouseEvent) => {
+      const trigger = mouseTriggerFromEvent(event);
+      /** A button this build has no name for: let it through rather than binding a guess. */
+      if (!trigger) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      /**
+       * Every press is an attempt to bind, wherever it lands — including on the recorder's own
+       * chip, which is where the pointer still is after the click that started this.
+       *
+       * That spot used to cancel instead, and it made the most likely first press of all — a plain
+       * left click, right where the hand already was — do nothing and quietly close the recorder.
+       * The way out is Escape, which is a key and can therefore never be mistaken for a button
+       * somebody is trying to bind.
+       */
+      const reason = rejectMouseTrigger(trigger);
+      if (reason) {
+        /** Still recording: a refusal is an invitation to press something else, not a dead row. */
+        setError(reason);
+        return;
+      }
+      onChangeRef.current?.(formatMouseTrigger(trigger));
+      stop();
+    };
+
+    /** Everything the press would otherwise have done — activate a control, open a context menu. */
+    const swallow = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    /**
+     * `stopImmediatePropagation`, not `stopPropagation`: Escape is how half this panel closes
+     * something, and while the recorder is up it means one thing only. Plain propagation-stopping
+     * spares the descendants but not the other listeners on `window` itself, so cancelling could
+     * take the editor — or the panel — down with it.
+     */
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      stop();
+    };
+
+    const options = { capture: true } as const;
+    window.addEventListener('mousedown', onDown, options);
+    window.addEventListener('mouseup', swallow, options);
+    window.addEventListener('click', swallow, options);
+    window.addEventListener('auxclick', swallow, options);
+    window.addEventListener('contextmenu', swallow, options);
+    window.addEventListener('keydown', onKey, options);
+    /** Alt-tabbing away is a cancellation: the trigger must not stay off because a window moved. */
+    window.addEventListener('blur', stop);
+
+    return () => {
+      window.removeEventListener('mousedown', onDown, options);
+      window.removeEventListener('mouseup', swallow, options);
+      window.removeEventListener('click', swallow, options);
+      window.removeEventListener('auxclick', swallow, options);
+      window.removeEventListener('contextmenu', swallow, options);
+      window.removeEventListener('keydown', onKey, options);
+      window.removeEventListener('blur', stop);
+      window.electron?.resumeMouseTrigger?.();
+    };
+  }, [recording, stop]);
+
+  /** Closing the panel mid-recording must not leave the trigger switched off. */
+  useEffect(() => () => { window.electron?.resumeMouseTrigger?.(); }, []);
+
+  const chips = mouseTriggerChips(item.current);
+
+  return (
+    <div className="zs-mouse-trigger">
+      <div className="zs-mouse-trigger-row">
+        <span
+          className={`zs-mouse-trigger-slot${recording ? ' is-recording' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          {recording ? (
+            <em>Press a button…</em>
+          ) : (
+            chips.map((chip, index) => (
+              <React.Fragment key={chip}>
+                {index > 0 && <span className="zs-mouse-trigger-plus">+</span>}
+                <kbd>{chip}</kbd>
+              </React.Fragment>
+            ))
+          )}
+        </span>
+        {/*
+          While it listens there is no button here, because there is nothing left that could be
+          clicked: every press in the window is being read as the answer. What stands in its place
+          says how to get out, in the one language the recorder is not listening to.
+        */}
+        {recording ? (
+          <span className="zs-mouse-trigger-stop">
+            <Circle size={11} strokeWidth={0} fill="currentColor" aria-hidden />
+            <b>Esc to stop</b>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="zs-mouse-trigger-record"
+            aria-labelledby={`${item.key}-label`}
+            aria-describedby={describedBy}
+            title="Record a button"
+            onClick={() => { setError(null); setRecording(true); }}
+          >
+            <Circle size={11} strokeWidth={0} fill="currentColor" aria-hidden />
+            <b>Record</b>
+          </button>
+        )}
+      </div>
+      {(recording || error) && (
+        <p className={`zs-mouse-trigger-note${error ? ' is-warn' : ''}`} role="status">
+          {error && <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />}
+          <span>{error ?? 'Press the button you want, anywhere in this window.'}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function normalizeHexInput(value: string): string | null {
   const hex = value.trim().replace(/^#/, '');
   return /^[0-9a-f]{6}$/i.test(hex) ? `#${hex.toUpperCase()}` : null;
 }
 
 /**
- * The panel's dropdown. One row uses it — Language — and it exists because that row outgrew the
- * segmented control at seven options.
+ * The panel's dropdown. Two rows use it — Language, which outgrew the segmented control at seven
+ * options, and Shortcut behavior, whose two options could not be named in the width a segmented
+ * control had for them.
  *
  * A native `<select>` was the first version and the honest starting point: accessible,
  * keyboard-complete and free. What it is not is ours — Chromium draws the popup from the OS theme,
@@ -2175,6 +2494,10 @@ function normalizeHexInput(value: string): string | null {
  * than moved focus, type-ahead with an idle reset, Home/End, Escape cancelling versus Tab
  * committing, focus returning to the trigger on close, and the active option kept in view. Those
  * are not embellishments on a dropdown — for anyone not using a mouse, they ARE the dropdown.
+ *
+ * An option may also carry a `help` sentence, drawn as a mark it opens on hover rather than as
+ * text in the list. That is for the labels that mean nothing on their own — Toggle, Hold — where
+ * the alternative is a parenthesis on every row and a popup that is mostly explanation.
  */
 /**
  * The shell, which is both where the popup is painted and what it is measured against.
@@ -2206,6 +2529,26 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
   const listId = `${item.key}-listbox`;
 
   /**
+   * The option whose help sentence is showing, and where that bubble was painted.
+   *
+   * Two pieces of state rather than one because the bubble cannot be placed until it has been
+   * measured: `.zs-select-tip` fixes the width, the browser decides the height from the sentence,
+   * and only then is it known whether it fits below the mark. So `helpFor` asks for the bubble,
+   * `tipAt` is filled in by a layout effect once it exists, and until it does the bubble renders
+   * hidden. Both happen before paint, so nothing is ever seen in the wrong place.
+   */
+  const [helpFor, setHelpFor] = useState<number | null>(null);
+  const [tipAt, setTipAt] = useState<TipPlacement>();
+  const tipRef = useRef<HTMLDivElement>(null);
+  const helpIconRefs = useRef(new Map<number, HTMLSpanElement>());
+  /**
+   * Whether the list is being driven by keys, so the help can follow the highlight for someone
+   * who has no pointer to hover with — without the bubble popping up every time a pointer merely
+   * crosses an option on its way somewhere else.
+   */
+  const [byKeyboard, setByKeyboard] = useState(false);
+
+  /**
    * Anchored to the trigger, measured against the shell, re-measured rather than remembered.
    *
    * Two constraints meet here. The row lives inside `.zs-scroll`, so a popup positioned within the
@@ -2235,9 +2578,17 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
   }, [choices.length]);
 
   useLayoutEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setHelpFor(null);
+      setByKeyboard(false);
+      return;
+    }
     measure();
-    const reposition = () => measure();
+    /** The bubble is anchored to a row that just moved, so it is dismissed rather than chased. */
+    const reposition = () => {
+      setHelpFor(null);
+      measure();
+    };
     /** Capture: the scroll that moves this row is `.zs-scroll`'s, and it does not reach `window`. */
     window.addEventListener('scroll', reposition, true);
     window.addEventListener('resize', reposition);
@@ -2252,13 +2603,61 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
     if (isOpen) setActiveIndex(selectedIndex);
   }, [isOpen, selectedIndex]);
 
-  useEffect(() => {
-    if (isOpen) listRef.current?.focus({ preventScroll: true });
-  }, [isOpen]);
+  /**
+   * Focus follows the list's own mounting, not `isOpen`, because those are not the same moment.
+   *
+   * The popup renders on `isOpen && placement`, and `placement` is only filled in by the layout
+   * effect above — so the very first open commits once WITHOUT a list, and React flushes that
+   * commit's passive effects before it starts the re-render that adds one. An effect keyed on
+   * `isOpen` therefore ran against a `listRef` that was still null, exactly once per mount: the
+   * first time anyone opened the dropdown the keyboard stayed outside it, arrow keys scrolled the
+   * panel instead of walking the options, and Escape sailed past to close Settings. Every
+   * subsequent open worked, because by then `placement` was already set — which is precisely the
+   * shape of bug that gets reported as "sometimes".
+   *
+   * A callback ref cannot miss it: it is called with the node the moment the node exists.
+   */
+  const attachList = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    node?.focus({ preventScroll: true });
+  }, []);
 
   useEffect(() => {
     if (isOpen) optionRefs.current.get(activeIndex)?.scrollIntoView({ block: 'nearest' });
   }, [isOpen, activeIndex]);
+
+  /**
+   * Arrowing onto an option with a help sentence shows it; arrowing off it takes it away.
+   *
+   * Keyed on the sentence rather than on `choices`, which is rebuilt on every render and would
+   * make this an effect that runs every time anything in the panel changes.
+   */
+  const activeHelp = choices[activeIndex]?.help;
+  useEffect(() => {
+    if (!isOpen || !byKeyboard) return;
+    setHelpFor(activeHelp ? activeIndex : null);
+  }, [isOpen, byKeyboard, activeIndex, activeHelp]);
+
+  useLayoutEffect(() => {
+    if (helpFor === null) {
+      setTipAt(undefined);
+      return;
+    }
+    const container = portalTarget();
+    const list = listRef.current;
+    const icon = helpIconRefs.current.get(helpFor);
+    const tip = tipRef.current;
+    if (!container || !list || !icon || !tip) return;
+    const bounds = container.getBoundingClientRect();
+    setTipAt(
+      helpTipPlacement(
+        icon.getBoundingClientRect(),
+        list.getBoundingClientRect(),
+        { top: bounds.top, left: bounds.left, width: bounds.width, height: bounds.height },
+        tip.offsetHeight,
+      ),
+    );
+  }, [helpFor]);
 
   const close = useCallback((returnFocus = true) => {
     setIsOpen(false);
@@ -2294,6 +2693,7 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
   );
 
   const onListKeyDown = (event: React.KeyboardEvent) => {
+    setByKeyboard(true);
     const step = (delta: number) => {
       event.preventDefault();
       setActiveIndex((index) => Math.min(choices.length - 1, Math.max(0, index + delta)));
@@ -2356,8 +2756,18 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
          * never closes. Deciding on mousedown means the shade has already swallowed the gesture
          * and the trigger never hears about it. The keyboard path is `onKeyDown` below, so nothing
          * is lost by not having a click handler.
+         *
+         * `preventDefault` is the other half, and it is about where the keyboard ends up. A
+         * mousedown's default action focuses the button it landed on, and that happens after the
+         * effect below has already moved focus into the list — so opening with the mouse left
+         * focus sitting on the trigger, where arrow keys scrolled the panel instead of walking
+         * the options and Escape reached the panel and closed Settings outright. Declining the
+         * default focus leaves the list's own the only one, and closing still hands it back.
          */
-        onMouseDown={() => setIsOpen((open) => !open)}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          setIsOpen((open) => !open);
+        }}
         onKeyDown={onTriggerKeyDown}
       >
         <span>{selected ? labelOf(selected) : ''}</span>
@@ -2376,7 +2786,7 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
           <div className="zs-select-shade" role="presentation" onMouseDown={() => close(false)} />
           <motion.div
             id={listId}
-            ref={listRef}
+            ref={attachList}
             className="zs-select-list"
             role="listbox"
             tabIndex={-1}
@@ -2398,17 +2808,84 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
                 }}
                 role="option"
                 aria-selected={index === selectedIndex}
+                /**
+                 * The help sentence is part of what this option IS, so it belongs in the name a
+                 * screen reader reads — the bubble below is how the same sentence reaches someone
+                 * looking at the list, and neither should be the only way to get it.
+                 */
+                aria-label={choice.help ? `${choice.label}. ${choice.help}` : undefined}
                 className={`zs-select-option${index === activeIndex ? ' is-active' : ''}`}
                 /** Pointer moves the highlight; it does not move focus off the listbox. */
-                onMouseMove={() => setActiveIndex(index)}
+                onMouseMove={() => {
+                  setByKeyboard(false);
+                  setActiveIndex(index);
+                }}
                 onClick={() => commit(index)}
               >
                 <b>{choice.label}</b>
                 {choice.hint && choice.hint !== choice.label && <small>{choice.hint}</small>}
-                {index === selectedIndex && <Check size={14} strokeWidth={2.2} aria-hidden="true" />}
+                {choice.help && (
+                  /*
+                    A span, not a button, and deliberately so: an option may not contain anything
+                    focusable — a `<button>` inside `role="option"` breaks the listbox for the
+                    assistive tech that would be the only thing to benefit from it, and it has
+                    nothing to announce anyway once the sentence is already in the option's name.
+                    What is left is a pointer affordance, which is exactly what this is.
+                  */
+                  <span
+                    className="zs-select-help"
+                    ref={(node) => {
+                      if (node) helpIconRefs.current.set(index, node);
+                      else helpIconRefs.current.delete(index);
+                    }}
+                    aria-hidden="true"
+                    onMouseEnter={() => {
+                      setByKeyboard(false);
+                      setHelpFor(index);
+                    }}
+                    onMouseLeave={() => setHelpFor((open) => (open === index ? null : open))}
+                  >
+                    <HelpCircle size={13} strokeWidth={1.9} />
+                  </span>
+                )}
+                <Check
+                  size={14}
+                  strokeWidth={2.2}
+                  aria-hidden="true"
+                  /**
+                   * Always drawn, invisible unless chosen, because the help mark sits beside it:
+                   * a check that only exists on one row shortens that row's end by its own width
+                   * and the marks come out on two different columns, which reads as a mistake
+                   * rather than as a check.
+                   */
+                  className={index === selectedIndex ? undefined : 'is-blank'}
+                />
               </div>
             ))}
           </motion.div>
+
+          {helpFor !== null && choices[helpFor]?.help && (
+            /*
+              Hidden until placed, and never in the way once it is.
+
+              `pointer-events: none` in the stylesheet is the backstop: the bubble is placed clear
+              of the popup, but it appears under a pointer already on its way to a click, and a
+              surface that swallowed that click would turn "read what this does" into "the option
+              stopped responding".
+            */
+            <div
+              ref={tipRef}
+              className="zs-select-tip"
+              role="presentation"
+              style={{
+                left: tipAt?.left ?? 0,
+                top: tipAt?.top ?? 0,
+                visibility: tipAt ? 'visible' : 'hidden',
+              }}
+            >
+              {choices[helpFor].help}
+            </div>
+          )}
         </>,
         portalTarget() ?? document.body,
       )}
@@ -2800,6 +3277,8 @@ function SettingsEditor({
         updateWorkspace={updateWorkspace}
         makeActive={() => update('activeWorkspaceIndex', index)}
         language={config.language}
+        config={config}
+        setConfig={setConfig}
         /**
          * The same delete as the list's, and it was not before. This branch filtered the array
          * inline and skipped `withPositionalHotkeys`, so removing anything but the last workspace
@@ -3006,6 +3485,23 @@ function itemFallbackIcon(item: AppItem) {
 const DEFAULT_FOLDER_ICON = 'Folder';
 /** And a command's. A typed line has no file to pull a bitmap from either. */
 const DEFAULT_COMMAND_ICON = 'TerminalSquare';
+
+/**
+ * The name a link with a scheme of its own is given: `steam://rungameid/440` → `steam`,
+ * `mailto:team@example.com` → `team@example.com`.
+ *
+ * There is no page behind these to ask for a title, so the address itself has to supply the label.
+ * The whole thing would be unreadable on a wheel, and the scheme is the part that says what opens.
+ */
+function protocolLinkLabel(address: string): string {
+  const clean = address.trim();
+  const colon = clean.indexOf(':');
+  if (colon < 1) return clean;
+  const scheme = clean.slice(0, colon);
+  const body = clean.slice(colon + 1).replace(/^\/+/, '');
+  if (/^mailto$/i.test(scheme) && body) return body;
+  return scheme;
+}
 
 /**
  * Whether Rovyl finds this shortcut a picture by itself: the program's icon, the document type's,
@@ -3619,7 +4115,7 @@ function WorkspaceCards({
             <WorkspaceWheelPreview workspace={workspace} accent={accent} />
             <span className="zs-ws-card-head">
               <b>{workspace.name}</b>
-              {workspace.hotkey ? <em>{workspace.hotkey}</em> : null}
+              {workspaceKeyAt(workspace, index) ? <em>{workspaceKeyAt(workspace, index)}</em> : null}
             </span>
             {/*
               Only the states worth saying. A tally of shortcuts sat here, read off a thumbnail
@@ -3667,12 +4163,21 @@ function WorkspaceManager({
   selectionMode,
   discoveryPhase,
   language,
+  config,
+  setConfig,
 }: {
   workspace: Workspace;
   workspaceIndex: number;
   isActive: boolean;
   canDelete: boolean;
   updateWorkspace: WorkspaceUpdater;
+  /**
+   * The whole config, for the key recorder alone. A workspace key has to be checked against every
+   * other binding in Rovyl — the other workspaces, the back key, the app shortcuts — and taking a
+   * key away from one of them writes outside this workspace.
+   */
+  config: UIConfig;
+  setConfig: PrecisionSettingsProps['setConfig'];
   makeActive: () => void;
   deleteWorkspace: () => void;
   /** Set when the user clicked "Fix shortcut" on a failed launch: expand that row and show it. */
@@ -3755,18 +4260,28 @@ function WorkspaceManager({
     setEditingIndex(openEditor ? newIndex : null);
   };
 
-  const addAppPath = async (path: string, label?: string) => {
-    const cleanPath = path.trim();
-    if (!cleanPath) return;
-    const displayName = label?.trim() || cleanPath.split(/[/\\]/).filter(Boolean).pop()?.replace(/\.(exe|lnk|bat|cmd)$/i, '') || 'Application';
-    let customIconUrl: string | undefined;
-    try { customIconUrl = (await window.electron?.getFileIcon?.(cleanPath)) || undefined; } catch { /* use fallback */ }
-    const safeId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+  /** `crypto.randomUUID` is absent on a few older webviews, and a shortcut with no id is unreachable. */
+  const newShortcutId = () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 9)}`;
 
+  /**
+   * One application shortcut, icon and all — shared by the picker, the Browse button and a drop.
+   *
+   * Returns the item rather than adding it: a drop lands several at once and has to commit them in
+   * a single write, or each one would be appended to a workspace the previous one had already
+   * replaced.
+   */
+  const buildAppItem = async (path: string, label?: string): Promise<AppItem | null> => {
+    const cleanPath = path.trim();
+    if (!cleanPath) return null;
+    const displayName = label?.trim() || cleanPath.split(/[/\\]/).filter(Boolean).pop()?.replace(/\.(exe|lnk|bat|cmd)$/i, '') || 'Application';
+    let customIconUrl: string | undefined;
+    try { customIconUrl = (await window.electron?.getFileIcon?.(cleanPath)) || undefined; } catch { /* use fallback */ }
+
     const nextItem: AppItem = {
-      id: safeId, type: 'app', label: displayName,
+      id: newShortcutId(), type: 'app', label: displayName,
       iconName: 'AppWindow', iconSource: customIconUrl ? 'native' : 'lucide', customIconUrl,
       command: cleanPath, commandType: 'app', description: 'Application',
     };
@@ -3779,7 +4294,14 @@ function WorkspaceManager({
         /* keep the local guess */
       }
     }
-    addItem(isIde ? { ...nextItem, hasRecents: true, terminalCommands: [] } : nextItem, isIde);
+    return isIde ? { ...nextItem, hasRecents: true, terminalCommands: [] } : nextItem;
+  };
+
+  const addAppPath = async (path: string, label?: string) => {
+    const nextItem = await buildAppItem(path, label);
+    if (!nextItem) return;
+    /** An IDE opens its editor straight away: the recents and terminal switches only exist there. */
+    addItem(nextItem, Boolean(nextItem.hasRecents));
   };
 
   const addSelectedApps = async () => {
@@ -3880,21 +4402,44 @@ function WorkspaceManager({
     };
   }, [addMode, url, urlLabelTyped]);
 
-  const addUrl = async () => {
-    const normalized = normalizeSiteUrl(url);
-    if (!normalized) return;
-    const typedLabel = urlLabel.trim();
+  /**
+   * One web shortcut, named and iconned the way the site itself says.
+   *
+   * `address` may carry a scheme that is not the web's at all — `steam://`, `mailto:`, `obsidian://`
+   * all arrive this way from a drop. Those are stored verbatim and nothing is fetched for them:
+   * there is no page behind `mailto:` to ask, and `normalizeSiteUrl` would put `https://` in front
+   * of the scheme and break the one thing the shortcut had to get right.
+   */
+  const buildUrlItem = async (address: string, label?: string): Promise<AppItem | null> => {
+    const typedLabel = label?.trim() || '';
+
+    if (isNonWebScheme(address)) {
+      const clean = address.trim();
+      return {
+        id: newShortcutId(), type: 'app', label: typedLabel || protocolLinkLabel(clean),
+        iconName: 'Globe', iconSource: 'lucide',
+        command: clean, commandType: 'url', description: 'Web link',
+      };
+    }
+
+    const normalized = normalizeSiteUrl(address);
+    if (!normalized) return null;
     /** The icon and the name are two independent fetches; neither should wait on the other. */
     const [icon, title] = await Promise.all([
       resolveWebsiteIconFields(normalized),
       typedLabel ? Promise.resolve(null) : resolveWebsiteTitle(normalized),
     ]);
-    addItem({
-      id: crypto.randomUUID(), type: 'app',
+    return {
+      id: newShortcutId(), type: 'app',
       label: typedLabel || title || hostLabelFromUrl(normalized),
       iconName: 'Globe', iconSource: icon?.iconSource || 'lucide', customIconUrl: icon?.customIconUrl,
       command: normalized, commandType: 'url', description: 'Web link',
-    });
+    };
+  };
+
+  const addUrl = async () => {
+    const nextItem = await buildUrlItem(url, urlLabel);
+    if (nextItem) addItem(nextItem);
   };
 
   const chooseFolder = async () => {
@@ -3904,13 +4449,20 @@ function WorkspaceManager({
     if (!folderLabel) setFolderLabel(path.split(/[/\\]/).filter(Boolean).pop() || 'Folder');
   };
 
-  const addFolder = () => {
-    if (!folderPath) return;
-    addItem({
-      id: crypto.randomUUID(), type: 'app', label: folderLabel.trim() || 'Folder',
-      iconName: 'Folder', iconSource: 'lucide', command: folderPath,
+  const buildFolderItem = (path: string, label?: string): AppItem | null => {
+    const cleanPath = path.trim();
+    if (!cleanPath) return null;
+    return {
+      id: newShortcutId(), type: 'app',
+      label: label?.trim() || labelFromDroppedPath(cleanPath) || 'Folder',
+      iconName: 'Folder', iconSource: 'lucide', command: cleanPath,
       commandType: 'folder', description: 'Folder shortcut',
-    });
+    };
+  };
+
+  const addFolder = () => {
+    const nextItem = buildFolderItem(folderPath, folderLabel);
+    if (nextItem) addItem(nextItem);
   };
 
   /** `Quarterly report.xlsx` → `Quarterly report`. The icon already says which kind of file it is. */
@@ -3932,16 +4484,21 @@ function WorkspaceManager({
    * `iconSource` is only set to 'native' when there is something to show, or the healing pass would
    * spend its retries chasing an icon that never existed.
    */
-  const addFile = async () => {
-    const cleanPath = filePath.trim();
-    if (!cleanPath) return;
+  const buildFileItem = async (path: string, label?: string): Promise<AppItem | null> => {
+    const cleanPath = path.trim();
+    if (!cleanPath) return null;
     let customIconUrl: string | undefined;
     try { customIconUrl = (await window.electron?.getFileIcon?.(cleanPath)) || undefined; } catch { /* use fallback */ }
-    addItem({
-      id: crypto.randomUUID(), type: 'app', label: fileLabel.trim() || fileNameLabel(cleanPath),
+    return {
+      id: newShortcutId(), type: 'app', label: label?.trim() || fileNameLabel(cleanPath),
       iconName: 'File', iconSource: customIconUrl ? 'native' : 'lucide', customIconUrl,
       command: cleanPath, commandType: 'file', description: 'File shortcut',
-    });
+    };
+  };
+
+  const addFile = async () => {
+    const nextItem = await buildFileItem(filePath, fileLabel);
+    if (nextItem) addItem(nextItem);
   };
 
   /** `npm run dev -- --port 3000` → `npm run dev`: short enough for a wheel label. */
@@ -3960,18 +4517,206 @@ function WorkspaceManager({
    * A typed command line. Nothing is checked here beyond it being non-empty: the shell is the only
    * judge of what the line means, and a failed run comes back as a launch card like any other.
    */
-  const addCommand = () => {
-    const line = commandLine.trim();
-    if (!line) return;
-    const dir = commandDir.trim();
-    addItem({
-      id: crypto.randomUUID(), type: 'app', label: commandLabel.trim() || commandNameLabel(line),
-      iconName: DEFAULT_COMMAND_ICON, iconSource: 'lucide', command: line,
+  const buildCommandItem = (
+    line: string,
+    options?: { label?: string; workingDirectory?: string; shell?: 'powershell' | 'cmd'; window?: 'open' | 'hidden' },
+  ): AppItem | null => {
+    const cleanLine = line.trim();
+    if (!cleanLine) return null;
+    const dir = options?.workingDirectory?.trim();
+    return {
+      id: newShortcutId(), type: 'app', label: options?.label?.trim() || commandNameLabel(cleanLine),
+      iconName: DEFAULT_COMMAND_ICON, iconSource: 'lucide', command: cleanLine,
       commandType: 'command', description: 'Command',
-      commandShell, commandWindow,
+      commandShell: options?.shell ?? 'powershell',
+      commandWindow: options?.window ?? 'open',
       ...(dir ? { workingDirectory: dir } : {}),
-    });
+    };
   };
+
+  const addCommand = () => {
+    const nextItem = buildCommandItem(commandLine, {
+      label: commandLabel,
+      workingDirectory: commandDir,
+      shell: commandShell,
+      window: commandWindow,
+    });
+    if (nextItem) addItem(nextItem);
+  };
+
+  /* ── Drag and drop ────────────────────────────────────────────────────────────────────────────
+   *
+   * Anything that can be dragged in Windows can be dropped on this list, and lands as a shortcut
+   * without a single question: a program, a folder, a document, a link out of a browser, an address
+   * or a command line copied from somewhere else. Nothing is asked BY DESIGN — the five Add forms
+   * already exist for the case where the user wants to name the thing before it exists, and a
+   * dialog in front of a drop would undo the only advantage a drop has. The name, the icon and the
+   * type are worked out here; the pencil on the row is where any of them can be corrected, and the
+   * toast carries an Undo for the drop that was a mistake.
+   *
+   * What a PATH actually is can only be answered by the disk, and the renderer cannot reach it —
+   * `inspectDropPaths` asks main, which also resolves `.lnk` and reads the address out of a `.url`.
+   */
+
+  const [isDropTarget, setIsDropTarget] = useState(false);
+  /**
+   * How many drops are still being worked out. A count and not a flag: a second drop let go while
+   * the first is still fetching a favicon would otherwise have the first one's `finally` take the
+   * progress bar down with the second still running.
+   */
+  const [pendingDrops, setPendingDrops] = useState(0);
+  /**
+   * A row being dragged to reorder passes over this list too, carrying `text/plain`. Without this
+   * the section would try to import the wheel's own shortcut as a command line.
+   */
+  const rowDragRef = useRef(false);
+
+  /**
+   * A text field inside the section keeps its own drop.
+   *
+   * Dragging a word from one input into another is ordinary editing, and the section sits under
+   * every one of them — without this, dropping a name into the Name field would ALSO add a command
+   * shortcut spelled the same way.
+   */
+  const isEditableDropTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) return false;
+    return Boolean(target.closest('input, textarea, [contenteditable="true"]'));
+  };
+
+  const dropCarriesShortcuts = (event: React.DragEvent<HTMLElement>): boolean => {
+    const transfer = event.dataTransfer;
+    if (!transfer || rowDragRef.current) return false;
+    const types = Array.from(transfer.types ?? []);
+    /** A file is always an import, even over a text field: no input can accept one anyway. */
+    if (types.includes('Files')) return true;
+    if (isEditableDropTarget(event.target)) return false;
+    return types.includes('text/uri-list') || types.includes('text/plain');
+  };
+
+  /**
+   * Everything the drop knows, read in the handler itself.
+   *
+   * A `DataTransfer` is emptied the moment the event finishes, so none of this survives an `await`
+   * — the payload is lifted out synchronously and the work happens against the copy.
+   */
+  const readDropPayload = (transfer: DataTransfer): DropPayload => {
+    const paths: string[] = [];
+    for (const file of Array.from(transfer.files ?? [])) {
+      /** Electron 28 still puts the real path on a File; a browser build has none, and skips. */
+      const filePath = (file as File & { path?: string }).path;
+      if (filePath) paths.push(filePath);
+    }
+    let uriList = '';
+    let text = '';
+    try { uriList = transfer.getData('text/uri-list') || ''; } catch { /* not offered */ }
+    try { text = transfer.getData('text/plain') || ''; } catch { /* not offered */ }
+    return { paths, uriList, text };
+  };
+
+  const importDroppedShortcuts = async (payload: DropPayload) => {
+    const entries = dropEntriesFrom(payload);
+    if (!entries.length) return;
+
+    setPendingDrops((count) => count + 1);
+    try {
+      const paths = entries.flatMap((entry) => (entry.kind === 'path' ? [entry.path] : []));
+      let inspected: (InspectedDropPath | null)[] = [];
+      if (paths.length) {
+        try {
+          inspected = (await window.electron?.inspectDropPaths?.(paths)) ?? [];
+        } catch (e) {
+          /** No answer from main is not a failed drop: the names still say enough to build from. */
+        }
+      }
+
+      let cursor = 0;
+      const built = await Promise.all(entries.map((entry) => {
+        if (entry.kind === 'command') return Promise.resolve(buildCommandItem(entry.line));
+        if (entry.kind === 'url') return buildUrlItem(entry.url);
+
+        const answer = inspected[cursor++] ?? null;
+        /**
+         * Main could not be asked, or could not read it. `guessPathKind` never claims `folder` —
+         * a name cannot prove a directory — and a `.url` it cannot open is just a file, so both
+         * fall to the branch that opens whatever Windows has registered for it.
+         */
+        const kind = answer?.kind ?? (guessPathKind(entry.path) === 'app' ? 'app' : 'file');
+        const label = answer?.label || labelFromDroppedPath(entry.path);
+        if (kind === 'url') return buildUrlItem(answer?.url || entry.path, label);
+        if (kind === 'app') return buildAppItem(answer?.path ?? entry.path, label);
+        if (kind === 'folder') return Promise.resolve(buildFolderItem(answer?.path ?? entry.path, label));
+        return buildFileItem(answer?.path ?? entry.path, label);
+      }));
+
+      const items = built.filter((item): item is AppItem => Boolean(item));
+      if (!items.length) return;
+
+      /** One write for the whole drop — appended one at a time, each would overwrite the last. */
+      updateWorkspace(workspaceIndex, (current) => ({ apps: [...current.apps, ...items] }));
+
+      const added = new Set(items.map((item) => item.id));
+      showToast(
+        items.length === 1 ? `Added “${items[0].label}”` : `Added ${items.length} shortcuts`,
+        () => updateWorkspace(workspaceIndex, (current) => ({
+          apps: current.apps.filter((item) => !added.has(item.id)),
+        })),
+      );
+    } catch (e) {
+      console.error('Failed to add dropped shortcuts:', e);
+    } finally {
+      setPendingDrops((count) => Math.max(0, count - 1));
+    }
+  };
+
+  /**
+   * Handlers for the whole Shortcuts section, so a near miss still lands. `dragLeave` fires on every
+   * child boundary crossed, which is why it checks the pointer really left the section.
+   */
+  const shortcutDropHandlers = {
+    onDragEnter: (event: React.DragEvent<HTMLElement>) => {
+      if (!dropCarriesShortcuts(event)) return;
+      event.preventDefault();
+      setIsDropTarget(true);
+    },
+    onDragOver: (event: React.DragEvent<HTMLElement>) => {
+      if (!dropCarriesShortcuts(event)) {
+        /** Over a text field: the sheet must come down, or it would cover what is being typed into. */
+        if (isDropTarget && isEditableDropTarget(event.target)) setIsDropTarget(false);
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      setIsDropTarget(true);
+    },
+    onDragLeave: (event: React.DragEvent<HTMLElement>) => {
+      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+      setIsDropTarget(false);
+    },
+    onDrop: (event: React.DragEvent<HTMLElement>) => {
+      if (!dropCarriesShortcuts(event)) return;
+      event.preventDefault();
+      setIsDropTarget(false);
+      void importDroppedShortcuts(readDropPayload(event.dataTransfer));
+    },
+  };
+
+  /**
+   * The sheet comes down when the drag ends ANYWHERE, not only when it leaves the section.
+   *
+   * `dragleave` covers the pointer moving off, but a drag let go over a child that swallowed the
+   * event, or ended outside the window, sends this section nothing at all — and a full-section
+   * overlay left up over a list nobody is dragging on is a dead end with no way out.
+   */
+  useEffect(() => {
+    if (!isDropTarget) return;
+    const clear = () => setIsDropTarget(false);
+    window.addEventListener('drop', clear);
+    window.addEventListener('dragend', clear);
+    return () => {
+      window.removeEventListener('drop', clear);
+      window.removeEventListener('dragend', clear);
+    };
+  }, [isDropTarget]);
 
   /**
    * Dragging in the shortcut list.
@@ -4245,11 +4990,18 @@ function WorkspaceManager({
               <Check size={15} strokeWidth={2.2} />
             </button>
           </div>
-          {/* Past the ninth workspace `withPositionalHotkeys` assigns 0, which is not a key. */}
-          {workspace.hotkey ? (
-            <p className="zs-workspace-meta"><span>Key {workspace.hotkey}</span></p>
-          ) : null}
         </div>
+        {/**
+         * The key used to be a read-only line saying "Key 3" — the position, restated. It is a
+         * control now, on a row of its own rather than squeezed into the identity grid: the
+         * clash warning needs the width, and it has two buttons under it.
+         */}
+        <WorkspaceKeyRecorder
+          workspaceIndex={workspaceIndex}
+          config={config}
+          setConfig={setConfig}
+          showToast={showToast}
+        />
 {/**
          * Two states, two icons, two tooltips.
          *
@@ -4327,7 +5079,51 @@ function WorkspaceManager({
         )}
       </AnimatePresence>
 
-      <section className="zs-workspace-shortcuts">
+      {/**
+       * And the same modal for one shortcut's icon. Folders needed it first — every one arrived
+       * wearing the same `Folder` glyph — and now every kind has it: an app can wear another
+       * program's icon, a site a logo, a command a picture.
+       */}
+      <AnimatePresence>
+        {iconEditItem && (
+          <IconPickerModal
+            key="item-icon"
+            titleId="item-icon-modal-title"
+            title={itemIconModalTitle(iconEditItem)}
+            hint={`Shown on the wheel for “${iconEditItem.label || 'this shortcut'}”.`}
+            selectedIcon={itemFallbackIcon(iconEditItem)}
+            picture={iconEditItem.customIconUrl
+              ? {
+                  url: iconEditItem.customIconUrl,
+                  file: iconEditItem.customIconFile,
+                  label: itemIconSummary(iconEditItem).title,
+                  custom: iconEditItem.iconSource === 'custom',
+                }
+              : null}
+            canReset={!itemIconIsDefault(iconEditItem)}
+            onSelect={(iconName) => setItemGlyph(iconEditItem, iconName)}
+            onPicture={(pick) => setItemPicture(iconEditItem, pick)}
+            onReset={() => resetItemIcon(iconEditItem)}
+            onClose={() => setIconEditItemId(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/*
+        The whole section is the drop zone, not the list inside it: a file aimed at an empty
+        workspace, or let go over the add panel beside the list, is the same intention.
+      */}
+      <section className={`zs-workspace-shortcuts${isDropTarget ? ' is-drop-target' : ''}`} {...shortcutDropHandlers}>
+        {/*
+          While a drop is being worked out — paths asked of main, icons extracted, titles fetched.
+          Indeterminate on purpose: the slow part is a favicon or a page title on somebody else's
+          server, and a percentage would be a number made up to fill the bar.
+        */}
+        {pendingDrops > 0 && (
+          <div className="zs-drop-progress" role="progressbar" aria-label="Adding dropped shortcuts">
+            <span />
+          </div>
+        )}
         <div className="zs-workspace-section-head">
           <div><h3>Shortcuts</h3></div>
           <div className="zs-add-actions" aria-label="Add shortcut">
@@ -4559,10 +5355,21 @@ function WorkspaceManager({
                   const rect = header.getBoundingClientRect();
                   event.dataTransfer.setDragImage(header, event.clientX - rect.left, event.clientY - rect.top);
                 }
+                /** Marks the drag as this list's own, so the section does not read it as an import. */
+                rowDragRef.current = true;
                 setItemDragIndex(index);
               }}
-              onDragEnd={() => { setItemDragIndex(null); setItemDropEdge(null); setItemDragArmed(null); }}
+              onDragEnd={() => {
+                rowDragRef.current = false;
+                setItemDragIndex(null); setItemDropEdge(null); setItemDragArmed(null);
+              }}
+              /*
+                Reordering only. Something dragged in from OUTSIDE is left alone here so it reaches
+                the section's own handler — claiming it would mean a file dropped on a row is
+                swallowed by a reorder that has no index to work with.
+              */
               onDragOver={(event) => {
+                if (!rowDragRef.current) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
                 const rect = event.currentTarget.getBoundingClientRect();
@@ -4573,6 +5380,7 @@ function WorkspaceManager({
               }}
               onDragLeave={() => setItemDropEdge((current) => (current?.index === index ? null : current))}
               onDrop={(event) => {
+                if (!rowDragRef.current) return;
                 event.preventDefault();
                 const from = Number(event.dataTransfer.getData('text/plain'));
                 const edge = itemDropEdge?.index === index ? itemDropEdge.edge : 'above';
@@ -4856,11 +5664,33 @@ function WorkspaceManager({
                 <span>Rovyl fills this workspace by itself. You can add more above at any time.</span>
               </div>
             ) : (
-              <div className="zs-manager-empty is-large"><SquareStack size={22} /><b>This workspace is empty</b><span>Add an application, URL, folder, file, or command above.</span></div>
+              <div className="zs-manager-empty is-large"><SquareStack size={22} /><b>This workspace is empty</b><span>Add an application, URL, folder, file, or command above — or drag one in from anywhere in Windows.</span></div>
             )
           )}
         </div>
         </div>
+
+        {/*
+          Only while something is being carried over the section. A permanent "you can drop things
+          here" panel would be furniture on every workspace, and the sheet says what will happen at
+          the one moment it is worth reading.
+        */}
+        {isDropTarget && (
+          <div className="zs-shortcut-drop" aria-hidden="true">
+            <div className="zs-shortcut-drop-copy">
+              <ArrowDownToLine size={20} strokeWidth={1.8} />
+              <b>Drop to add to {workspace.name}</b>
+              <small>Applications, folders, files, links and commands — added straight away.</small>
+            </div>
+          </div>
+        )}
+        {/*
+          Announced rather than drawn: the sheet above is decoration, and a screen reader needs to
+          hear that shortcuts are being worked out from what was let go.
+        */}
+        <p className="zs-visually-hidden" role="status">
+          {pendingDrops > 0 ? 'Adding dropped shortcuts…' : ''}
+        </p>
       </section>
 
       <button type="button" className="zs-delete-workspace" disabled={!canDelete} onClick={deleteWorkspace}>
@@ -4986,6 +5816,267 @@ function BackKeyRecorder({
           <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
           <span>{error}</span>
         </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Records the key that switches to ONE workspace while the wheel is open.
+ *
+ * Like `BackKeyRecorder` and unlike `ShortcutRecorder`, nothing is asked of Windows here. The key
+ * is not a system-wide accelerator the user is claiming against every other application — it only
+ * means anything while Rovyl's wheel is up, and main registers it for the duration. So there is
+ * nobody to probe; the only question is whether something in ROVYL already answers to it.
+ *
+ * That question is answered before the value is written, because the failure it prevents is
+ * invisible: two features registering one key means the second one silently loses, and a settings
+ * field that saves and does nothing is the worst state available. On a clash the user is told what
+ * holds the key and given the two real choices — take it, or press something else.
+ */
+function WorkspaceKeyRecorder({
+  workspaceIndex,
+  config,
+  setConfig,
+  showToast,
+}: {
+  workspaceIndex: number;
+  config: UIConfig;
+  setConfig: PrecisionSettingsProps['setConfig'];
+  showToast: (message: string, undo?: () => void) => void;
+}) {
+  const workspace = config.workspaces[workspaceIndex];
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [clash, setClash] = useState<{ key: string; with: WorkspaceKeyClash } | null>(null);
+
+  const current = workspace ? workspaceKeyAt(workspace, workspaceIndex) : '';
+  const positional = positionalWorkspaceKey(workspaceIndex);
+  const isDefault = workspace ? isDefaultWorkspaceKey(workspace) : true;
+
+  /** Through a ref: the listener is bound once per recording session and must see today's config. */
+  const contextRef = useRef({ config, workspaceIndex });
+  contextRef.current = { config, workspaceIndex };
+
+  const assign = useCallback(
+    (key: string, clearing: WorkspaceKeyClash | null) => {
+      setConfig((currentConfig) => {
+        const cleared = clearing ? clearWorkspaceKeyClash(currentConfig, clearing) : currentConfig;
+        return {
+          ...cleared,
+          workspaces: cleared.workspaces.map((entry, index) =>
+            index === workspaceIndex ? { ...entry, hotkeyKey: key } : entry,
+          ),
+        };
+      });
+    },
+    [setConfig, workspaceIndex],
+  );
+
+  useEffect(() => {
+    if (!recording) return;
+    const handler = (e: KeyboardEvent) => {
+      /** A bare modifier is the user still reaching for the key, not the key. Keep listening. */
+      if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph'].includes(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      /** Escape leaves the recorder rather than being refused as a reserved key. */
+      if (e.key === 'Escape') {
+        setRecording(false);
+        setError(null);
+        return;
+      }
+      const reason = rejectWorkspaceKey(e.key, e.ctrlKey, e.altKey, e.metaKey);
+      if (reason) {
+        /** Still recording: a refusal is an invitation to try another key, not a dead card. */
+        setError(reason);
+        return;
+      }
+
+      const key = normalizeWorkspaceKey(e.key);
+      const { config: live, workspaceIndex: index } = contextRef.current;
+      setRecording(false);
+      setError(null);
+
+      if (key === workspaceKeyAt(live.workspaces[index], index)) return;
+
+      const found = findWorkspaceKeyClash(live, key, index);
+      if (found) {
+        /** Nothing is written yet. The next click decides whether to take the key or try again. */
+        setClash({ key, with: found });
+        return;
+      }
+      assign(key, null);
+    };
+    /** Capture, so the panel's own shortcuts and focused controls do not eat the keystroke first. */
+    window.addEventListener('keydown', handler, { capture: true });
+    return () => window.removeEventListener('keydown', handler, { capture: true });
+  }, [recording, assign]);
+
+  if (!workspace) return null;
+
+  const beginRecording = () => {
+    setClash(null);
+    setError(null);
+    setRecording(true);
+  };
+
+  /**
+   * Only when the key will NOT do what the slot shows — said here rather than left to be
+   * discovered by pressing it and watching nothing happen. A key that works needs no caption.
+   */
+  const note = (() => {
+    /**
+     * Before the recording check, not after it. A refusal leaves the recorder LISTENING — trying
+     * another key is the whole response to it — so a note hidden while recording is a note that
+     * never appears, and the key just seems not to register.
+     */
+    if (error) return error;
+    if (recording || !current) return null;
+
+    /**
+     * The clash the recorder never agreed to. Reordering the list moves the positional defaults, so
+     * a workspace can end up holding a digit somebody recorded elsewhere — and `workspaceKeyBindings`
+     * hands that key to the recorded one, leaving this row showing a key that does something else.
+     * It is said here because this is where anybody would come to look.
+     *
+     * Only on the side that LOSES. From the winner's row the key works, and saying that something
+     * else also wants it would be a warning about a state that is already resolved.
+     */
+    const owns = workspaceKeyBindings(config).some(
+      (binding) => binding.index === workspaceIndex && binding.key === current,
+    );
+    const standing = findWorkspaceKeyClash(config, current, workspaceIndex);
+    if (standing && !(standing.kind === 'workspace' && owns)) {
+      return standing.kind === 'workspace'
+        ? `${current} is also the wheel key for ${standing.label}, which was recorded, so it goes there. Record another key for this workspace.`
+        : standing.kind === 'back'
+          ? `${current} is also the key that steps out of a folder. Record another key for this workspace.`
+          : `${current} is also the shortcut for ${standing.label}. Record another key for this workspace.`;
+    }
+
+    return null;
+  })();
+
+  return (
+    <div className="zs-ws-key">
+      <div className="zs-ws-key-row">
+        <span className="zs-ws-key-label">Wheel key</span>
+        <button
+          type="button"
+          className={`zs-ws-key-slot${recording ? ' is-recording' : ''}`}
+          aria-label={`Wheel key for ${workspace.name}`}
+          /** Stopping clears the refusal with it — it described a key that is no longer being asked for. */
+          onClick={() => {
+            if (!recording) return beginRecording();
+            setRecording(false);
+            setError(null);
+          }}
+        >
+          {recording ? (
+            <em>Press any key…</em>
+          ) : current ? (
+            <kbd>{current === ' ' ? 'Space' : current}</kbd>
+          ) : (
+            <kbd className="is-empty">None</kbd>
+          )}
+        </button>
+        {/*
+          Two ways back, and only the one that is not already true is offered: the key this
+          position ships with, or no key at all.
+        */}
+        {!isDefault && positional && (
+          <button
+            type="button"
+            className="zs-btn is-quiet"
+            onClick={() => {
+              setClash(null);
+              setError(null);
+              setRecording(false);
+              setConfig((currentConfig) => ({
+                ...currentConfig,
+                workspaces: currentConfig.workspaces.map((entry, index) =>
+                  index === workspaceIndex ? { ...entry, hotkeyKey: undefined } : entry,
+                ),
+              }));
+            }}
+          >
+            Use {positional}
+          </button>
+        )}
+        {current && (
+          <button
+            type="button"
+            className="zs-btn is-quiet"
+            onClick={() => {
+              setClash(null);
+              setError(null);
+              setRecording(false);
+              assign(WORKSPACE_KEY_NONE, null);
+            }}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      {/* The invitation, until there is a reason to say something more specific than "any key". */}
+      {recording && !error && (
+        <p className="zs-shortcut-note" role="status">
+          <span>Any single key — a letter, a digit or a symbol. Escape cancels.</span>
+        </p>
+      )}
+
+      {clash ? (
+        /**
+         * The warning names the holder and stops there. Nothing has been written, so neither
+         * button is a correction — one takes the key, the other goes back to recording, and
+         * closing the editor without choosing leaves everything as it was.
+         */
+        <div className="zs-ws-key-clash" role="alert">
+          <p>
+            <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
+            <span>
+              <b>{clash.key === ' ' ? 'Space' : clash.key}</b> is already{' '}
+              {clash.with.kind === 'workspace'
+                ? `the wheel key for ${clash.with.label}`
+                : clash.with.kind === 'back'
+                  ? 'the key that steps out of a folder'
+                  : `the shortcut for ${clash.with.label}`}
+              . One key cannot do both.
+            </span>
+          </p>
+          <div className="zs-ws-key-clash-actions">
+            <button
+              type="button"
+              className="zs-btn is-primary"
+              onClick={() => {
+                const taking = clash;
+                setClash(null);
+                assign(taking.key, taking.with);
+                showToast(
+                  taking.with.kind === 'workspace'
+                    ? `${taking.key} moved from ${taking.with.label} to ${workspace.name}`
+                    : taking.with.kind === 'back'
+                      ? `${taking.key} is now ${workspace.name}. The back key was removed.`
+                      : `${taking.key} is now ${workspace.name}. It no longer opens ${taking.with.label}.`,
+                );
+              }}
+            >
+              Use it here
+            </button>
+            <button type="button" className="zs-btn" onClick={beginRecording}>
+              Record another key
+            </button>
+          </div>
+        </div>
+      ) : (
+        note && (
+          <p className="zs-shortcut-note is-warn" role="status">
+            <AlertTriangle size={13} strokeWidth={1.9} aria-hidden />
+            <span>{note}</span>
+          </p>
+        )
       )}
     </div>
   );
