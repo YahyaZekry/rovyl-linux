@@ -971,18 +971,6 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
        * nothing the row's own title does not already say.
        */
       general: [
-        ...(canUpdate ? [{ key: 'update', group: 'Updates', ...updateRow }] : []),
-        {
-          key: 'openAtLogin', configKey: 'openAtLogin', group: '', title: 'Start with Windows',
-          description: 'Rovyl is ready as soon as you sign in to Windows.',
-          kind: 'bool', enabled: Boolean(config.openAtLogin),
-          keywords: 'startup login boot sign in',
-          onToggle: () => {
-            const next = !config.openAtLogin;
-            update('openAtLogin', next);
-            window.electron?.setLoginItemSettings?.({ openAtLogin: next });
-          },
-        },
         {
           /**
            * A select, not the segmented control this was while it held two languages: seven
@@ -1014,17 +1002,6 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
         ...(canUpdate ? [{ key: 'update', group: '', keywords: 'updates version', ...updateRow }] : []),
         {
-          key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu', group: 'Activation',
-          title: 'Menu on middle click over apps',
-          description: isLinux
-            ? 'On: a middle click opens the menu (the normal middle-click action is cancelled). Off: middle click behaves exactly like without Rovyl — open the menu with the hotkey.'
-            : 'A quick middle click opens the menu.',
-          kind: 'bool', enabled: config.middleClickOpensMenu !== false,
-          onToggle: () => {
-            update('middleClickOpensMenu', !(config.middleClickOpensMenu !== false));
-          },
-        },
-        {
           key: 'openAtLogin', configKey: 'openAtLogin', group: 'Startup',
           title: isLinux ? 'Launch at startup' : 'Start with Windows',
           description: isLinux ? 'Rovyl starts when you sign in.' : 'Rovyl is ready as soon as you sign in to Windows.',
@@ -1044,6 +1021,17 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
       ],
       trigger: [
+        {
+          key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu', group: 'Activation',
+          title: 'Menu on middle click over apps',
+          description: isLinux
+            ? 'On: a middle click opens the menu (the normal middle-click action is cancelled). Off: middle click behaves exactly like without Rovyl — open the menu with the hotkey.'
+            : 'A quick middle click opens the menu.',
+          kind: 'bool', enabled: config.middleClickOpensMenu !== false,
+          onToggle: () => {
+            update('middleClickOpensMenu', !(config.middleClickOpensMenu !== false));
+          },
+        },
         /**
          * Each way in is a switch that owns its own settings, and the settings only exist while
          * the switch is on.
@@ -1616,43 +1604,6 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
               },
             ] as SettingItem[])
           : []),
-        {
-          key: 'settingsCorner', configKey: 'showSettingsCorner', group: 'Settings shortcut',
-          title: 'Settings button on the wheel',
-          /**
-           * Said with its cost, because it has one that shows: the overlay normally opens as a box
-           * around the wheel, and a corner only means the screen's corner if the window is the
-           * screen. And said with its one exclusion — aiming by direction hides the pointer, so
-           * there is no hand to bring to a corner and the gear is not drawn in that mode.
-           */
-          description:
-            config.radialInstantActivate === 'dwell'
-              ? 'A gear in the corner of the open wheel, one click from these settings. Launch without clicking aims by direction and hides the pointer, so the gear stays off while that is on.'
-              : 'A gear in the corner of the open wheel, one click from these settings. The wheel then opens over the whole screen instead of a box around itself, so the corner is a real one.',
-          kind: 'bool', enabled: config.showSettingsCorner === true,
-          keywords: 'gear cog icon corner open settings preferences shortcut button',
-          onToggle: () => update('showSettingsCorner', !config.showSettingsCorner),
-        },
-        ...(config.showSettingsCorner === true ? [{
-          key: 'settingsCornerPosition', configKey: 'settingsCorner' as const, group: 'Settings shortcut',
-          title: 'Which corner',
-          description: 'Where the gear sits. It steps inboard if the battery or weather pill is already there.',
-          /**
-           * A select: four corner names are ~380px of segmented control, wider than the column,
-           * and the same reason the Language row stopped being one.
-           */
-          kind: 'select' as const,
-          current: SETTINGS_CORNERS.includes(config.settingsCorner as SettingsCorner)
-            ? (config.settingsCorner as SettingsCorner)
-            : 'top-right',
-          choices: [
-            { value: 'top-right', label: 'Top right' },
-            { value: 'top-left', label: 'Top left' },
-            { value: 'bottom-right', label: 'Bottom right' },
-            { value: 'bottom-left', label: 'Bottom left' },
-          ],
-          onChange: (value: number | string) => update('settingsCorner', value as SettingsCorner),
-        }] : []),
         {
           key: 'settingsCorner', configKey: 'showSettingsCorner', group: 'Settings shortcut',
           title: 'Settings button on the wheel',
