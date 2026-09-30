@@ -438,6 +438,12 @@ export interface UIConfig {
   /** Click mode: holds at/after this many ms open the menu; faster clicks stay native. */
   menuHoldMinMs?: number;
   doubleClickOpensMenu?: boolean;
+  /**
+   * What the wheel's ROOT shows when two or more workspaces are enabled: the launcher
+   * (one slice per workspace — pick one to slide into it) or the current workspace's own
+   * shortcuts with hub-scroll cycling between workspaces.
+   */
+  workspaceRootMode?: 'launcher' | 'current';
   /** click: an MMB click opens and leaves the radial open; hold: holding opens, releasing runs the selection. */
   mouseTriggerMode?: 'click' | 'hold';
   /** toggle: pressing shortcut opens/closes; hold: holding shortcut opens, releasing runs selection or closes. */

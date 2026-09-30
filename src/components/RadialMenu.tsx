@@ -1716,8 +1716,11 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
 
   // The root hub carries the Rovyl identity; deeper levels keep the Back affordance.
   const isRoot = folderStack.length === 0;
-  /** The root is the home launcher whenever there is more than one workspace to launch into. */
-  const rootIsPicker = enabledWorkspaceCount(config) > 1;
+  /** The root is the home launcher whenever there is more than one workspace to launch into —
+   * unless the user picked the old shape, where the root opens on the current workspace and
+   * hub-scroll slides between them. */
+  const rootIsPicker = enabledWorkspaceCount(config) > 1
+    && (config.workspaceRootMode ?? 'launcher') === 'launcher';
   const centerLabel = !isRoot ? uiString('menu.back') : (config.centerButton?.label || uiString('menu.center'));
 
 
@@ -2642,8 +2645,11 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
     const handleWheel = (e: WheelEvent) => {
       if (!onWorkspaceSwitch) return;
       const { config, folderStack } = stateRef.current;
-      /** At the home launcher every workspace is already on screen — there is nothing to cycle to. */
-      if (folderStack.length === 0) return;
+      /** At the home launcher every workspace is already on screen — there is nothing to cycle to.
+       * On a `current` root the wheel IS one workspace, so scroll is the slide between them. */
+      const launcherRoot = enabledWorkspaceCount(config) > 1
+        && (config.workspaceRootMode ?? 'launcher') === 'launcher';
+      if (folderStack.length === 0 && launcherRoot) return;
       const numWorkspaces = config.workspaces.length;
       if (numWorkspaces <= 1) return;
 

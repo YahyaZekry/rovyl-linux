@@ -1137,14 +1137,14 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                     onChange: (value) => update('mouseTriggerMode', value as UIConfig['mouseTriggerMode']),
                   }] as SettingItem[])
                 : []),
-        ...(config.mouseTriggerMode === 'click'
+        ...(config.mouseTriggerMode === 'click' && config.doubleClickOpensMenu !== true
           ? [range('menuHoldMinMs', 'Mouse', 'Menu hold threshold',
               'Middle clicks shorter than this stay pure native (tab close, link). Holds at least this long open the menu instead.',
               config.menuHoldMinMs ?? 350, 150, 1000,
               (value) => update('menuHoldMinMs', Math.round(value)),
               (value) => `${Math.round(value)} ms`, 50, 'menuHoldMinMs')]
           : []),
-        ...(config.mouseTriggerMode === 'click' && !mmbCalibration
+        ...(config.mouseTriggerMode === 'click' && !mmbCalibration && config.doubleClickOpensMenu !== true
           ? [{
               key: 'mmbCalibration', group: 'Mouse',
               title: 'Calibrate from your own clicks',
@@ -1434,6 +1434,21 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         ]) : []),
       ],
       spaces: [
+        ...(config.workspaces.length > 1
+          ? [{
+              key: 'workspaceRootMode', configKey: 'workspaceRootMode' as const, group: 'Your workspaces',
+              title: 'Root wheel',
+              description: 'Launcher: the wheel opens on all your workspaces — aim at one to slide into it. Slide: the wheel opens on the current workspace\'s own shortcuts; scroll the hub to move between workspaces.',
+              keywords: 'launcher home root workspaces slide scroll cycle switch bloom',
+              kind: 'segmented' as const,
+              current: config.workspaceRootMode ?? 'launcher',
+              choices: [
+                { value: 'launcher', label: 'Launcher' },
+                { value: 'current', label: 'Slide' },
+              ],
+              onChange: (value: number | string) => update('workspaceRootMode', value as UIConfig['workspaceRootMode']),
+            }]
+          : []),
         ...config.workspaces.map((workspace, index) => ({
           key: workspace.id,
           group: 'Your workspaces',

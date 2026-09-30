@@ -401,6 +401,7 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   enableMouseTrigger: true,
   middleClickOpensMenu: true,
   doubleClickOpensMenu: false,
+  workspaceRootMode: 'launcher',
   menuHoldMinMs: 350,
   mouseTriggerMode: 'click',
   mouseTriggerButton: 'middle',

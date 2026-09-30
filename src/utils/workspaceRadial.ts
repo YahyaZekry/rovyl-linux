@@ -31,10 +31,10 @@ export function buildWorkspacePickerItems(cfg: UIConfig): AppItem[] {
 /**
  * Root level of the radial: the home launcher — every workspace, one slice each.
  *
- * This used to be a choice (`workspaceSwitchMode`): the home launcher, or the current workspace's
- * shortcuts with keys to switch between spaces. The two were never alternatives in practice — the
- * launcher shows the spaces AND the keys still reach them from it — so the setting only asked
- * people to give one up to have the other, and it is gone.
+ * Which root you get is `workspaceRootMode`: the launcher, or the current workspace's shortcuts
+ * with hub-scroll sliding between spaces. (An earlier setting by another name asked people to give
+ * one up to have the other — the keys reach the workspaces in both shapes, so the only real choice
+ * is what the first frame shows, and that is what the setting is now.)
  *
  * One workspace is the exception, and it is not a special case so much as the absence of one: a
  * launcher offering a single destination is a step that asks to be skipped, so the wheel opens on
@@ -45,6 +45,9 @@ export function getRootRadialApps(
   currentWorkspaceApps: AppItem[],
 ): AppItem[] {
   if (enabledWorkspaceCount(cfg) <= 1) return currentWorkspaceApps;
+  /** `current` is the pre-launcher shape: the root opens on the active workspace's own
+   * shortcuts and hub-scroll slides between workspaces. Launcher stays the default. */
+  if ((cfg.workspaceRootMode ?? 'launcher') === 'current') return currentWorkspaceApps;
   return buildWorkspacePickerItems(cfg);
 }
 

@@ -37,10 +37,12 @@ jobs:
       - name: Smoke suite
         run: |
           set -e
-          for t in tray-menu radial-filter backdrop-dim taskbar-overlay icon-store \
+          for t in tray-menu radial-filter backdrop-dim icon-store \
                    persistence-mirror i18n select-menu keyboard-nav page-title \
                    fullscreen-bounds foreground-snapshot launch-result launch-failure \
-                   file-shortcut persistence-normalize icon-map start-app-launch; do
+                   file-shortcut persistence-normalize icon-map start-app-launch \
+                   drop-shortcut mouse-trigger workspace-key number-launch \
+                   radial-sectors targeting-mode window-split workspace-file back-key; do
             node "scripts/$t-smoke.mjs"
           done
           node --test backend/win32-launch.test.cjs backend/game-detection.test.cjs
