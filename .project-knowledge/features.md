@@ -1,6 +1,6 @@
 # Features & Workflows
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-21
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-30
 
 ## Features
 
@@ -13,7 +13,9 @@
 - **Settings panel** — `PrecisionSettings.tsx`: trigger, monitors, aiming, appearance, i18n, backups (import/export with inlined icons)
 - **Focus protection** — won't open over fullscreen games (game-detection)
 - **Middle-click calibration** — Settings → Mouse (click mode) → "Calibrate from your own clicks": two-sided, 3 fast presses (tab close) then 2 slower presses (menu intent); the threshold is the midpoint between slowest-fast and fastest-slow (fallback slowest + 150 ms). Main streams every press duration, the renderer owns the phases, and a steps modal shows progress. Applied live (save path re-arms the helper TRIGGER). Bands: < threshold pure native click, threshold…1 s menu (held back, CLICK_CONSUMED cancels), > 1 s autoscroll handover
-- **Double middle click opens the menu** (optional, click mode) — helper TRIGGER carries dblMs=300: a single fast click is held back through the window then lands natively (~300 ms late); a second press inside the window cancels it and emits `TRIGGER_DOUBLE`, the second gesture is swallowed natively, and main opens the menu. Off by default
+- **Double middle click opens the menu** (optional, click mode) — helper TRIGGER carries dblMs=300: a single fast click is held back through the window then lands natively (~300 ms late); a second press inside the window cancels it and emits `TRIGGER_DOUBLE`, the second gesture is swallowed natively, and main opens the menu. Off by default. While armed, the threshold slider and the calibration row hide (a single press can't open the menu, so the threshold is untestable)
+- **Root wheel mode** (Workspaces, 2+ workspaces) — `workspaceRootMode`: **Launcher** (upstream's home launcher: root shows every workspace, aim to slide in) or **Slide** (root opens on the current workspace's shortcuts; hub-scroll cycles). `getRootRadialApps` + `rootIsPicker` + the scroll guard all honor it; workspace keys and hub-back work in both shapes
+- **v1.16 upstream features** — recorded mouse triggers (shared `mouse-trigger.cjs`; modifier combos are Windows-only on Linux — our TRIGGER carries menuMin+dblMs instead of modMask), recorded workspace keys (`workspaceKeyBindings` replaced the old picker/keys toggle), drag-any-file-to-workspace (`inspect-drop-paths`), area-wedges targeting (`'angle'` mode removed, configs rewritten on read), settings-corner gear, GitHub row (repointed to YahyaZekry/rovyl-linux)
 - **Tray** — pause/resume, workspaces, settings, quit; autostart toggle
 - **Licensing** — Google OAuth, gate screen without license (vestigial per TODO §2.4)
 
