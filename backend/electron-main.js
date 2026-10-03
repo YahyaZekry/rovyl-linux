@@ -3151,7 +3151,8 @@ ipcMain.on("set-system-muted", (_event, muted) => {
 });
 
 /**
- * The Windows panel behind a readout, named rather than spelled.
+ * The Windows panels behind the readouts, named rather than spelled (Linux maps the same names
+ * to real settings modules — see SYSTEM_PANEL_COMMANDS below).
  *
  * The renderer sends `"network"`, not `"ms-availablenetworks:"`. A renderer that could hand main an
  * arbitrary URI to open is a renderer that can ask the shell to run anything, and the four entries
@@ -3166,15 +3167,56 @@ const SYSTEM_PANEL_URIS = {
   clock: "ms-settings:dateandtime",
 };
 
+/** Same four panels, as (command, args) lists to try in order on Linux — the settings module
+ * that owns the same controls (KDE's systemsettings kcm first, standalone tools as fallback). */
+const SYSTEM_PANEL_COMMANDS = {
+  volume: [["pavucontrol"]],
+  network: [
+    ["systemsettings", "kcm_networkmanagement"],
+    ["nm-connection-editor"],
+  ],
+  battery: [
+    ["systemsettings", "kcm_powermanagement"],
+    ["gnome-power-statistics"],
+  ],
+  clock: [["systemsettings", "clock"], ["gnome-control-center", "datetime"]],
+};
+
+function openLinuxSystemPanel(panel) {
+  const candidates = SYSTEM_PANEL_COMMANDS[panel] || [];
+  const tryNext = (i) => {
+    if (i >= candidates.length) {
+      diagLog(`[SystemStatus] no Linux panel found for ${panel}`);
+      return;
+    }
+    const [cmd, ...args] = candidates[i];
+    try {
+      const child = require("child_process").spawn(cmd, args, {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.on("error", () => tryNext(i + 1));
+      child.unref();
+    } catch (e) {
+      diagLog(`[SystemStatus] could not open ${panel}: ${e.message}`);
+    }
+  };
+  tryNext(0);
+}
+
 ipcMain.on("open-system-panel", (_event, panel) => {
-  const uri = SYSTEM_PANEL_URIS[panel];
-  if (!uri) return;
   /**
    * The wheel is up and holding the mouse when this runs. The renderer takes it down first, the
    * same order the corner gear follows — a panel opening behind a wheel that still has the pointer
    * is a window the user cannot reach.
    */
   try {
+    if (process.platform === "linux") {
+      openLinuxSystemPanel(panel);
+      return;
+    }
+    const uri = SYSTEM_PANEL_URIS[panel];
+    if (!uri) return;
     void shell.openExternal(uri);
   } catch (e) {
     diagLog(`[SystemStatus] could not open ${panel}: ${e.message}`);

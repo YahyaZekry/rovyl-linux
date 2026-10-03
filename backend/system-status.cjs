@@ -14,7 +14,8 @@
  * `STATUS`, because getting that order wrong means the battery pill showing the volume.
  */
 
-const { spawn } = require("child_process");
+const { spawn, execFile } = require("child_process");
+const fs = require("fs");
 const { createLineSplitter } = require("./foreground-snapshot.cjs");
 
 /**
@@ -74,6 +75,150 @@ function parseSystemStatusLine(line) {
 const WATCH_INTERVAL_MS = 1000;
 
 /**
+ * The Linux backend, in place of the Windows helper.
+ *
+ * There is no rovyl-helper on Linux carrying a `system-status` mode, and none is needed: every
+ * reading the dock shows is a file or a one-shot command away. Volume and mute come from
+ * PipeWire's `wpctl` (PulseAudio's `pactl` as the fallback), the battery from
+ * `/sys/class/power_supply`, and the network from `/sys/class/net` plus `/proc/net/wireless` —
+ * all read on the same one-second cadence the helper's WATCH uses, so the dock's contract
+ * (a fresh `status` object handed to `onStatus`) is identical on both platforms.
+ */
+function createLinuxStatusBackend({ intervalMs, log = () => {}, onStatus = () => {} }) {
+  let timer = null;
+
+  function run(cmd, args) {
+    return new Promise((resolve) => {
+      execFile(cmd, args, { timeout: 1500 }, (err, stdout) => {
+        resolve(err ? null : String(stdout));
+      });
+    });
+  }
+
+  async function readVolume() {
+    /** wpctl answers `Volume: 0.53` and appends `[MUTED]` when muted. */
+    let out = await run("wpctl", ["get-volume", "@DEFAULT_AUDIO_SINK@"]);
+    let m = out && /Volume:\s*([\d.]+)/.exec(out);
+    if (m) {
+      return {
+        volume: Math.max(0, Math.min(100, Math.round(parseFloat(m[1]) * 100))),
+        muted: /\[MUTED\]/.test(out),
+      };
+    }
+    /** pactl: `Volume: front-left: 42598 / 65% / ...` and a separate `get-sink-mute`. */
+    out = await run("pactl", ["get-sink-volume", "@DEFAULT_SINK@"]);
+    m = out && /(\d+)%/.exec(out);
+    if (!m) return null;
+    const muteOut = await run("pactl", ["get-sink-mute", "@DEFAULT_SINK@"]);
+    return {
+      volume: Math.max(0, Math.min(100, parseInt(m[1], 10))),
+      muted: !!muteOut && /yes/i.test(muteOut),
+    };
+  }
+
+  async function readNetwork() {
+    let names = [];
+    try {
+      names = fs.readdirSync("/sys/class/net");
+    } catch {
+      return { network: "none", signal: -1 };
+    }
+    let wifiIf = null;
+    let ethIf = null;
+    for (const n of names) {
+      if (n === "lo") continue;
+      let state = "";
+      try {
+        state = fs.readFileSync(`/sys/class/net/${n}/operstate`, "utf8").trim();
+      } catch { /* interface vanished mid-read */ }
+      if (state !== "up" && state !== "unknown") continue;
+      let isWifi = false;
+      try {
+        isWifi = fs.existsSync(`/sys/class/net/${n}/wireless`);
+      } catch { /* ignore */ }
+      if (isWifi && !wifiIf) wifiIf = n;
+      else if (!isWifi && !ethIf) ethIf = n;
+    }
+    if (wifiIf) {
+      /** /proc/net/wireless: `wlan0: 0000 70. -52. ...` — level in dBm, roughly -100..-30. */
+      let signal = -1;
+      try {
+        const wireless = fs.readFileSync("/proc/net/wireless", "utf8");
+        const line = wireless.split("\n").find((l) => l.startsWith(`${wifiIf}:`));
+        if (line) {
+          const dbm = parseFloat(line.split(/\s+/)[3]);
+          if (Number.isFinite(dbm)) {
+            signal = Math.max(0, Math.min(100, Math.round(((dbm + 100) / 70) * 100)));
+          }
+        }
+      } catch { /* no wireless proc entry */ }
+      return { network: "wifi", signal };
+    }
+    if (ethIf) return { network: "ethernet", signal: 100 };
+    return { network: "none", signal: -1 };
+  }
+
+  async function readBattery() {
+    let dir = null;
+    try {
+      dir = fs.readdirSync("/sys/class/power_supply").find((d) => /^BAT/i.test(d)) || null;
+    } catch { /* no power_supply at all */ }
+    if (!dir) return { battery: -1, charging: false };
+    let capacity = Number.NaN;
+    let charging = false;
+    try {
+      capacity = parseInt(fs.readFileSync(`/sys/class/power_supply/${dir}/capacity`, "utf8").trim(), 10);
+    } catch { /* ignore */ }
+    try {
+      charging = /charg/i.test(fs.readFileSync(`/sys/class/power_supply/${dir}/status`, "utf8"));
+    } catch { /* ignore */ }
+    if (!Number.isFinite(capacity)) return { battery: -1, charging: false };
+    return { battery: Math.max(0, Math.min(100, capacity)), charging };
+  }
+
+  async function readAll() {
+    const [vol, net, bat] = await Promise.all([readVolume(), readNetwork(), readBattery()]);
+    onStatus({
+      volume: vol ? vol.volume : -1,
+      muted: vol ? vol.muted : false,
+      network: net.network,
+      signal: net.signal,
+      battery: bat.battery,
+      charging: bat.charging,
+    });
+  }
+
+  return {
+    /** `watch` follows the wheel: a timer only while something is looking. */
+    start(watch) {
+      void readAll();
+      if (watch && !timer) timer = setInterval(() => { void readAll(); }, intervalMs);
+      if (!watch && timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    },
+    stop() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    },
+    async setVolume(percent) {
+      const value = Math.max(0, Math.min(100, Math.round(percent)));
+      const done = await run("wpctl", ["set-volume", "@DEFAULT_AUDIO_SINK@", (value / 100).toFixed(2)]);
+      if (done === null) await run("pactl", ["set-sink-volume", "@DEFAULT_SINK@", `${value}%`]);
+      void readAll();
+    },
+    async setMuted(muted) {
+      const done = await run("wpctl", ["set-mute", "@DEFAULT_AUDIO_SINK@", muted ? "1" : "0"]);
+      if (done === null) await run("pactl", ["set-sink-mute", "@DEFAULT_SINK@", muted ? "1" : "0"]);
+      void readAll();
+    },
+  };
+}
+
+/**
  * The helper, its last reading, and the four things anyone wants to do with it.
  *
  * `setActive` follows the SETTING — a dock that is switched on keeps a process, so the first wheel
@@ -88,6 +233,8 @@ function createSystemStatusService({ resolveHelperPath, log = () => {}, onStatus
   let pending = [];
   let status = { ...UNKNOWN_SYSTEM_STATUS };
   let active = false;
+  /** Linux has no helper process — the readings come from the local backend instead. */
+  let linuxBackend = null;
 
   function write(command) {
     if (!child || !ready || !child.stdin || !child.stdin.writable) {
@@ -102,7 +249,25 @@ function createSystemStatusService({ resolveHelperPath, log = () => {}, onStatus
   }
 
   function start() {
-    if (process.platform !== "win32" || child) return;
+    if (child || linuxBackend) return;
+    if (process.platform === "linux") {
+      /** The helper is a Windows binary; on Linux the readings are local files and wpctl. */
+      linuxBackend = createLinuxStatusBackend({
+        intervalMs: WATCH_INTERVAL_MS,
+        log,
+        onStatus: (next) => {
+          status = next;
+          try {
+            onStatus(status);
+          } catch (e) {
+            log(`[SystemStatus] listener threw: ${e.message}`);
+          }
+        },
+      });
+      linuxBackend.start(watching);
+      return;
+    }
+    if (process.platform !== "win32") return;
     const helper = resolveHelperPath();
     if (!helper) {
       log("[SystemStatus] no helper binary; the dock's readouts stay unknown");
@@ -163,6 +328,11 @@ function createSystemStatusService({ resolveHelperPath, log = () => {}, onStatus
 
   function stop() {
     pending = [];
+    if (linuxBackend) {
+      linuxBackend.stop();
+      linuxBackend = null;
+      return;
+    }
     if (!child) return;
     const spawned = child;
     child = null;
@@ -202,15 +372,27 @@ function createSystemStatusService({ resolveHelperPath, log = () => {}, onStatus
       const wanted = !!next;
       if (wanted === watching) return;
       watching = wanted;
+      if (linuxBackend) {
+        linuxBackend.start(watching);
+        return;
+      }
       if (!child) return;
       write(watching ? `WATCH ${WATCH_INTERVAL_MS}` : "WATCH 0");
     },
     setVolume(percent) {
       const value = Math.round(Number(percent));
       if (!Number.isFinite(value)) return;
+      if (linuxBackend) {
+        void linuxBackend.setVolume(value);
+        return;
+      }
       write(`VOL ${Math.max(0, Math.min(100, value))}`);
     },
     setMuted(muted) {
+      if (linuxBackend) {
+        void linuxBackend.setMuted(!!muted);
+        return;
+      }
       write(`MUTE ${muted ? 1 : 0}`);
     },
     /** The last reading. Never starts a helper to answer — an unknown answer is a valid one. */
