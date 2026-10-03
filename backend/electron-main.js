@@ -1550,6 +1550,10 @@ async function createWindow() {
     icon: isDev
       ? path.join(__dirname, "../public/icon.png")
       : path.join(__dirname, "../dist/icon.png"),
+    /** Wayland ignores the constructor icon (app_id + icon-theme matching is the only channel
+     * there); X11 honors it. setIcon after creation covers Electron versions that drop the
+     * constructor value on X11 too. */
+
     /** What shows in a strip the renderer has not painted yet while resizing; the renderer
      *  swaps it for the light theme's colour (`set-window-background`). */
     backgroundColor: "#151515",
@@ -5281,6 +5285,10 @@ app.whenReady().then(async () => {
 
   // 2. Create Window
   mainWindow = await createWindow();
+  if (process.platform === "linux" && mainWindow && !mainWindow.isDestroyed()) {
+    /** X11 reads the window's own icon; Wayland matches app_id→desktop-file→icon-theme. */
+    try { mainWindow.setIcon(isDev ? path.join(__dirname, "../public/icon.png") : path.join(__dirname, "../dist/icon.png")); } catch { /* cosmetic */ }
+  }
 
   /**
    * And the wheel's window, warm from the start.
