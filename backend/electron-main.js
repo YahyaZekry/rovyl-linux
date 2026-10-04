@@ -3167,23 +3167,64 @@ const SYSTEM_PANEL_URIS = {
   clock: "ms-settings:dateandtime",
 };
 
-/** Same four panels, as (command, args) lists to try in order on Linux — the settings module
- * that owns the same controls (KDE's systemsettings kcm first, standalone tools as fallback). */
-const SYSTEM_PANEL_COMMANDS = {
-  volume: [["pavucontrol"]],
-  network: [
-    ["systemsettings", "kcm_networkmanagement"],
-    ["nm-connection-editor"],
-  ],
-  battery: [
-    ["systemsettings", "kcm_powermanagement"],
-    ["gnome-power-statistics"],
-  ],
-  clock: [["systemsettings", "clock"], ["gnome-control-center", "datetime"]],
+/**
+ * Same four panels, as (command, args) lists to try in order on Linux.
+ *
+ * There is no one settings app on Linux: KDE ships systemsettings kcms, GNOME gnome-control-center
+ * pages, Cinnamon cinnamon-settings — and standalone tools (pavucontrol, nm-connection-editor)
+ * exist regardless of desktop. The order is decided by the session's XDG_CURRENT_DESKTOP so the
+ * panel that OPENS is the desktop's own, with the cross-desktop tools behind it as the net.
+ */
+const SYSTEM_PANEL_CANDIDATES = {
+  volume: {
+    kde: [["systemsettings", "kcm_sound"]],
+    gnome: [["gnome-control-center", "sound"]],
+    cinnamon: [["cinnamon-settings", "sound"]],
+    any: [["pavucontrol"]],
+  },
+  network: {
+    kde: [["systemsettings", "kcm_networkmanagement"]],
+    gnome: [["gnome-control-center", "network"]],
+    cinnamon: [["cinnamon-settings", "network"]],
+    any: [["nm-connection-editor"]],
+  },
+  battery: {
+    kde: [["systemsettings", "kcm_powermanagement"]],
+    gnome: [["gnome-power-statistics"], ["gnome-control-center", "power"]],
+    cinnamon: [["cinnamon-settings", "power"]],
+    any: [],
+  },
+  clock: {
+    kde: [["systemsettings", "clock"]],
+    gnome: [["gnome-control-center", "datetime"]],
+    cinnamon: [["cinnamon-settings", "date-and-time"]],
+    any: [],
+  },
 };
 
+function linuxDesktopFlavour() {
+  const desk = String(process.env.XDG_CURRENT_DESKTOP || "").toLowerCase();
+  if (desk.includes("kde") || desk.includes("plasma")) return "kde";
+  if (desk.includes("cinnamon")) return "cinnamon";
+  if (desk.includes("gnome") || desk.includes("unity")) return "gnome";
+  return "any";
+}
+
+function linuxPanelCandidates(panel) {
+  const table = SYSTEM_PANEL_CANDIDATES[panel] || {};
+  const flavour = linuxDesktopFlavour();
+  /** The desktop's own panel first, then every other desktop's, then the standalone tools —
+   * a spawn of an absent binary fails in milliseconds, so extra candidates cost nothing. */
+  const ordered = [
+    ...(table[flavour] || []),
+    ...Object.entries(table).flatMap(([name, cmds]) => (name !== flavour && name !== "any" ? cmds : [])),
+    ...(table.any || []),
+  ];
+  return ordered;
+}
+
 function openLinuxSystemPanel(panel) {
-  const candidates = SYSTEM_PANEL_COMMANDS[panel] || [];
+  const candidates = linuxPanelCandidates(panel);
   const tryNext = (i) => {
     if (i >= candidates.length) {
       diagLog(`[SystemStatus] no Linux panel found for ${panel}`);

@@ -1414,7 +1414,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           },
           {
             key: 'statusDock-network', group: 'System dock', title: 'Network',
-            description: 'Wi-Fi signal, or a wired connection. Click it for the Windows network panel.',
+            description: 'Wi-Fi signal, or a wired connection. Click it to open your system\'s network settings.',
             kind: 'bool' as const, enabled: statusDock.showNetwork,
             onToggle: () => updateStatusDock({ showNetwork: !statusDock.showNetwork }),
           },
