@@ -1,6 +1,6 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-09-30 (v1.16 synced; root-wheel option; dedup)
+> Last updated: 2026-10-05 (Linux docks live; panel clearance; settings re-categorized)
 > Status: Active
 > Stack: Electron 44.3.0 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
 > Current goal: port complete and user-verified; remaining: repo-rename config, deb udev/postinst polish, Windows regression pass

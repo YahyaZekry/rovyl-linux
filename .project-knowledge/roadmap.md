@@ -1,6 +1,6 @@
 # Roadmap
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-21
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-10-05
 > Forward-looking only. TODO.md is the source of truth for its own backlog (stable §.n ids).
 
 ## Current Goal
@@ -17,10 +17,10 @@ polish and release mechanics:
 4. **Shelf** — `npm run helper:build` is the Windows csc script; add `helper:build:linux`
    (gcc `-lX11 -lXtst -ludev`) so the Linux helper isn't compiled by hand.
 
-**Recently shipped (2026-09-21):** two-sided middle-click calibration (3 fast + 2 slow
-presses → midpoint threshold), optional double-middle-click menu (helper dblMs window +
-TRIGGER_DOUBLE), preload bridge for all newer renderer APIs, BLOCK_CLICK / CLICK_CONSUMED
-parsing in main, Windows TRIGGER branch fix. E2E scenarios A–J green.
+**Recently shipped:** v1.16 upstream merge (by hand); Linux system dock with live readings
+and desktop-aware panels; panel clearance for docks; workspace Root wheel (Launcher/Slide);
+taskbar icon fix; two-sided calibration + double-click option; settings category cleanup
+(Position consolidated in Appearance, no duplicates).
 
 ---
 
