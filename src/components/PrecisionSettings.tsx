@@ -1167,30 +1167,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           : []),
             ] as SettingItem[])
           : []),
-        {
-          key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
-          /**
-           * The consequence, not the mechanism. Nobody opens this panel wanting to know which
-           * `Display` object main asks for — they want to know which screen the thing they are about
-           * to launch will be sitting on.
-           */
-          description:
-            config.radialPlacement === 'cursor'
-              ? 'Appearance opens the wheel under the pointer, so it is already on the screen the pointer is on — this choice has nothing left to decide.'
-              : config.radialMonitor === 'cursor'
-                ? 'The wheel opens on the screen the pointer is already on, so what you launch lands where you are working.'
-                : 'The wheel always opens on the main screen, wherever the pointer happens to be.',
-          kind: 'segmented',
-          choices: [
-            { value: 'primary', label: 'Main screen' },
-            { value: 'cursor', label: waylandLimited ? 'Follow pointer (limited by Wayland)' : 'Follow pointer' },
-          ],
-          current: config.radialMonitor === 'cursor' ? 'cursor' : 'primary',
-          onChange: (value) => update('radialMonitor', value as UIConfig['radialMonitor']),
-        },
-        range('threshold', 'Position', 'Activation zone', 'Cursor distance required to confirm a target.',
-          config.activationThreshold, 20, 120, (value) => update('activationThreshold', value), (value) => `${Math.round(value)} px`,
-          1, 'activationThreshold'),
+
       ],
       appearance: [
         {
@@ -1282,6 +1259,30 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           kind: 'bool', enabled: config.showWorkspacePill !== false,
           onToggle: () => update('showWorkspacePill', config.showWorkspacePill === false),
         },
+        {
+          key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
+          /**
+           * The consequence, not the mechanism. Nobody opens this panel wanting to know which
+           * `Display` object main asks for — they want to know which screen the thing they are about
+           * to launch will be sitting on.
+           */
+          description:
+            config.radialPlacement === 'cursor'
+              ? 'Appearance opens the wheel under the pointer, so it is already on the screen the pointer is on — this choice has nothing left to decide.'
+              : config.radialMonitor === 'cursor'
+                ? 'The wheel opens on the screen the pointer is already on, so what you launch lands where you are working.'
+                : 'The wheel always opens on the main screen, wherever the pointer happens to be.',
+          kind: 'segmented',
+          choices: [
+            { value: 'primary', label: 'Main screen' },
+            { value: 'cursor', label: waylandLimited ? 'Follow pointer (limited by Wayland)' : 'Follow pointer' },
+          ],
+          current: config.radialMonitor === 'cursor' ? 'cursor' : 'primary',
+          onChange: (value) => update('radialMonitor', value as UIConfig['radialMonitor']),
+        },
+        range('threshold', 'Position', 'Activation zone', 'Cursor distance required to confirm a target.',
+          config.activationThreshold, 20, 120, (value) => update('activationThreshold', value), (value) => `${Math.round(value)} px`,
+          1, 'activationThreshold'),
         {
           key: 'radialPlacement', configKey: 'radialPlacement', group: 'Position', title: 'Where it opens',
           /**
