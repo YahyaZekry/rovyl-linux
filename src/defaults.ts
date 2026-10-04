@@ -402,6 +402,7 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   middleClickOpensMenu: true,
   doubleClickOpensMenu: false,
   workspaceRootMode: 'launcher',
+  dockPanelClearance: 0,
   menuHoldMinMs: 350,
   mouseTriggerMode: 'click',
   mouseTriggerButton: 'middle',

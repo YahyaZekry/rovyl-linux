@@ -1003,8 +1003,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         ...(canUpdate ? [{ key: 'update', group: '', keywords: 'updates version', ...updateRow }] : []),
         {
           key: 'openAtLogin', configKey: 'openAtLogin', group: 'Startup',
-          title: isLinux ? 'Launch at startup' : 'Start with Windows',
-          description: isLinux ? 'Rovyl starts when you sign in.' : 'Rovyl is ready as soon as you sign in to Windows.',
+          title: isLinux ? 'Launch at startup' : 'Start with Microsoft Windows',
+          description: isLinux ? 'Rovyl starts when you sign in.' : 'Rovyl is ready as soon as you sign in to Microsoft Windows.',
           kind: 'bool', enabled: Boolean(config.openAtLogin),
           onToggle: () => {
             const next = !config.openAtLogin;
@@ -1104,7 +1104,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                 key: 'mouseButton', configKey: 'mouseTriggerButton' as const, group: 'Mouse', title: 'Trigger button',
                 description: triggerAllowsHold
                   ? 'Press Record, then press the button you want. Side buttons are usually free; left and right need Ctrl, Alt, Shift or Win held with them.'
-                  : 'Press Record, then press the button you want. Left and right always open the wheel on the click — holding one down is a drag everywhere else in Windows, so there is no gesture to choose.',
+                  : 'Press Record, then press the button you want. Left and right always open the wheel on the click — holding one down is a drag everywhere else in Microsoft Windows, so there is no gesture to choose.',
                 kind: 'mouseButton', current: config.mouseTriggerButton ?? DEFAULT_MOUSE_TRIGGER,
                 keywords: 'wheel middle back forward mouse4 mouse5 side button macro record bind',
                 /**
@@ -1303,6 +1303,11 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           keywords: 'mouse cursor location position place spawn appear under pointer center centre',
           onChange: (value) => update('radialPlacement', value as UIConfig['radialPlacement']),
         },
+        range('dockPanelClearance', 'Position', 'Panel clearance',
+          'Keeps the docks off the screen edge by this many pixels — set it to your taskbar/panel thickness so they never slide under it. Wayland does not tell apps where the panel is.',
+          config.dockPanelClearance ?? 0, 0, 120,
+          (value) => update('dockPanelClearance', Math.round(value)),
+          (value) => `${Math.round(value)} px`, 2, 'dockPanelClearance'),
         range('backdrop', 'Presence', 'Background dimming',
           'How much the rest of the screen recedes. At 100% it goes: the desktop is covered edge to edge.',
           config.backdropOpacity ?? DEFAULT_UI_CONFIG.backdropOpacity, 0, 1,
@@ -3406,7 +3411,7 @@ function launchModeRisk(commandType: AppItem['commandType'], mode: 'normal' | 'r
       ? 'Reuses the browser already running: the page can land in an existing window or tab group instead of a new one, and profile or private windows may be ignored.'
       : 'Reuses the process already running: an IDE can switch the project open in the current window instead of opening another. Apps without support fall back to a normal launch.';
   }
-  return 'Reads the executable once so Windows keeps it cached, which can shorten the first launch. Some apps show a splash or a second instance when reused, and unsupported ones fall back to a normal launch.';
+  return 'Reads the executable once so Microsoft Windows keeps it cached, which can shorten the first launch. Some apps show a splash or a second instance when reused, and unsupported ones fall back to a normal launch.';
 }
 
 /**
@@ -3557,7 +3562,7 @@ function CommandRunOptions({
     <div className="zs-launch-options zs-command-options">
       <div>
         <b>Shell</b>
-        <small>{shell === 'cmd' ? 'Runs with Command Prompt (cmd.exe).' : 'Runs with Windows PowerShell.'}</small>
+        <small>{shell === 'cmd' ? 'Runs with Command Prompt (cmd.exe).' : 'Runs with Windows PowerShell (Microsoft).'}</small>
       </div>
       <div className="zs-segmented" role="radiogroup" aria-label="Shell">
         {([['powershell', 'PowerShell'], ['cmd', 'Command Prompt']] as const).map(([value, label]) => (
@@ -5254,7 +5259,7 @@ function WorkspaceManager({
                 <div className="zs-add-form">
                   <button type="button" className="zs-folder-picker" onClick={chooseDocumentFile}>
                     <FileGlyph size={20} />
-                    <div><b>{filePath ? filePath.split(/[/\\]/).filter(Boolean).pop() : 'Select a file'}</b><small>{filePath || 'Opens with whatever Windows uses for that file type'}</small></div>
+                    <div><b>{filePath ? filePath.split(/[/\\]/).filter(Boolean).pop() : 'Select a file'}</b><small>{filePath || 'Opens with whatever Microsoft Windows uses for that file type'}</small></div>
                     <ChevronRight size={15} />
                   </button>
                   <label className="zs-field"><span>Name</span><input value={fileLabel} onChange={(event) => setFileLabel(event.target.value)} placeholder="Name shown on the wheel" /></label>
@@ -5520,10 +5525,10 @@ function WorkspaceManager({
                             {item.commandType === 'url' && (item.launchMode ?? 'normal') === 'reuse'
                               ? 'Uses the existing default browser process when available.'
                               : (item.launchMode ?? 'normal') === 'prewarm'
-                              ? 'Warms the Windows file cache for this app and reuses an existing process when supported.'
+                              ? 'Warms the Microsoft Windows file cache for this app and reuses an existing process when supported.'
                               : (item.launchMode ?? 'normal') === 'reuse'
                                 ? 'Prefers the existing IDE, app, or browser process.'
-                                : 'Uses the standard Windows launch behavior.'}
+                                : 'Uses the standard Microsoft Windows launch behavior.'}
                           </small>
                         </div>
                         <div className="zs-segmented" role="radiogroup" aria-label="Launch mode">
@@ -6132,7 +6137,7 @@ function ShortcutRecorder({
   const note = (() => {
     if (status.kind === 'checking') return { tone: 'muted', text: `Checking ${status.accelerator}…` };
     if (status.kind === 'invalid') {
-      return { tone: 'warn', text: `${status.accelerator} is not a combination Windows can reserve. Include Ctrl, Alt or Shift.` };
+      return { tone: 'warn', text: `${status.accelerator} is not a combination Microsoft Windows can reserve. Include Ctrl, Alt or Shift.` };
     }
     if (status.kind === 'taken') {
       if (status.by) {
@@ -6143,7 +6148,7 @@ function ShortcutRecorder({
         tone: 'warn',
         text: status.hint
           ? `${status.accelerator} is already taken. ${status.hint}`
-          : `${status.accelerator} is already taken by another application, so Windows will not give it to Rovyl. The shortcut was not changed.`,
+          : `${status.accelerator} is already taken by another application, so Microsoft Windows will not give it to Rovyl. The shortcut was not changed.`,
       };
     }
     return null;

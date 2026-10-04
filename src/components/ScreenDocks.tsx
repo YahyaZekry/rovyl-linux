@@ -11,6 +11,8 @@ import {
 import { getIcon } from '../iconMap';
 import { SmartIcon } from './SmartIcon';
 
+const isWindows = navigator.userAgent.includes('Windows');
+
 /**
  * The two strips beside the open wheel.
  *
@@ -334,7 +336,7 @@ function StatusDockPlate({
         <button
           type="button"
           className="zn-dock-icon-button"
-          title={`${networkTitle(status)} — click for Windows network settings`}
+          title={`${networkTitle(status)} — click for ${isWindows ? 'Microsoft Windows' : 'your system'} network settings`}
           aria-label={networkTitle(status)}
           tabIndex={-1}
           {...swallowProps}
@@ -382,7 +384,7 @@ function StatusDockPlate({
         <button
           type="button"
           className="zn-dock-icon-button zn-dock-clock"
-          title="Click for Windows date and time settings"
+          title={`Click for ${isWindows ? "Microsoft Windows" : "your system"} date and time settings`}
           aria-label={`Time ${time}, ${date}`}
           tabIndex={-1}
           {...swallowProps}
@@ -496,6 +498,8 @@ export interface ScreenDocksProps {
   onOpenPanel: (panel: SystemPanel) => void;
   onVolume: (percent: number) => void;
   onMute: () => void;
+  /** Pixels to lift the docks off their screen edge (panel/taskbar thickness). */
+  clearance?: number;
   /** `performanceMode` and the closing state come from the wheel's own classes; nothing else is needed. */
   reduceMotion?: boolean;
 }
@@ -505,6 +509,7 @@ export const ScreenDocks: React.FC<ScreenDocksProps> = ({
   status,
   shortcuts,
   systemStatus,
+  clearance = 0,
   onLaunch,
   onOpenPanel,
   onVolume,
@@ -549,8 +554,16 @@ export const ScreenDocks: React.FC<ScreenDocksProps> = ({
           if (shortcutPlate) plates.push(shortcutPlate);
         }
 
+        /**
+         * Wayland never tells an app where the desktop's panels are, so the user does: this many
+         * pixels lift the dock off the edge it hugs, clearing a taskbar/panel of any thickness.
+         */
+        const edgeInset = position.startsWith('top')
+          ? { top: clearance }
+          : { bottom: clearance };
+
         return (
-          <div className={regionShellClass(position)} key={position}>
+          <div className={regionShellClass(position)} key={position} style={edgeInset}>
             <div
               className={`zn-radial-pill zn-dock-stack ${regionAlignClass(position)}`}
               style={{

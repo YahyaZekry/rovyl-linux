@@ -444,6 +444,12 @@ export interface UIConfig {
    * shortcuts with hub-scroll cycling between workspaces.
    */
   workspaceRootMode?: 'launcher' | 'current';
+  /**
+   * Pixels between a dock and the screen edge it hugs. Wayland gives an app no way to know
+   * where the desktop's panels are, so the user says it: the thickness of their taskbar/panel
+   * keeps the docks inside the visible area instead of sliding under it.
+   */
+  dockPanelClearance?: number;
   /** click: an MMB click opens and leaves the radial open; hold: holding opens, releasing runs the selection. */
   mouseTriggerMode?: 'click' | 'hold';
   /** toggle: pressing shortcut opens/closes; hold: holding shortcut opens, releasing runs selection or closes. */

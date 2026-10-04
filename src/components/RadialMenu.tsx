@@ -3719,6 +3719,7 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
               isOpen={isOpen && !isExiting && bloom && !echoActive}
               status={statusDock}
               shortcuts={shortcutDock}
+              clearance={Math.max(0, Math.min(120, Math.round(config.dockPanelClearance ?? 0)))}
               systemStatus={systemStatus}
               onLaunch={(item) => onClose(item.id, item)}
               onOpenPanel={(panel) => {
