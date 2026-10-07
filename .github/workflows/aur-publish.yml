@@ -1,12 +1,26 @@
 name: Publish to AUR
 
 on:
-  release:
-    types: [published]
+  # Releases here are created by softprops/action-gh-release with GITHUB_TOKEN, and
+  # events raised by GITHUB_TOKEN do not trigger other workflows — so `release:
+  # published` never fires. Watch the Linux build finish instead, and act only on tags.
+  workflow_run:
+    workflows: ["Linux builds"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to the AUR (e.g. v1.17.0)"
+        required: true
 
 jobs:
   aur:
     name: Update rovyl-bin on AUR
+    # Tag runs only; the branch runs of "Linux builds" have nothing to publish.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
@@ -17,8 +31,14 @@ jobs:
 
       - name: Download AppImage from release
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
+          TAG="${INPUT_TAG:-$RUN_TAG}"
+          if [[ ! "$TAG" =~ ^v[0-9] ]]; then
+            echo "::error::Not a version tag: '$TAG'"
+            exit 1
+          fi
           VER=${TAG#v}
           curl -fL -o rovyl.AppImage "https://github.com/${{ github.repository }}/releases/download/${TAG}/Rovyl-${VER}-linux.AppImage"
           echo "VER=$VER" >> "$GITHUB_ENV"
