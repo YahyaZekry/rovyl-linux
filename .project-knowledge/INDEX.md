@@ -1,9 +1,9 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-10-05 (Linux docks live; panel clearance; settings re-categorized)
+> Last updated: 2026-10-07 (AUR/Chaotic-AUR publishing added)
 > Status: Active
 > Stack: Electron 44.3.0 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
-> Current goal: port complete and user-verified; remaining: repo-rename config, deb udev/postinst polish, Windows regression pass
+> Current goal: port complete and user-verified; remaining: deb udev/postinst polish, Windows regression pass; AUR/Chaotic-AUR publishing scaffolded (needs AUR repo creation + secret)
 
 ## What This Project Does
 

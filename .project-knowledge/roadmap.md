@@ -1,6 +1,6 @@
 # Roadmap
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-10-05
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-10-07
 > Forward-looking only. TODO.md is the source of truth for its own backlog (stable §.n ids).
 
 ## Current Goal
@@ -16,6 +16,8 @@ polish and release mechanics:
    Windows build hasn't been touched since.
 4. **Shelf** — `npm run helper:build` is the Windows csc script; add `helper:build:linux`
    (gcc `-lX11 -lXtst -ludev`) so the Linux helper isn't compiled by hand.
+5. **AUR go-live** — create `rovyl-bin` on aur.archlinux.org, push initial PKGBUILD/.SRCINFO,
+   add `AUR_SSH_PRIVATE_KEY` GitHub secret (see `aur/README.md`); then PR PKGBUILD to chaotic-aur/PKGBUILDs.
 
 **Recently shipped:** v1.16 upstream merge (by hand); Linux system dock with live readings
 and desktop-aware panels; panel clearance for docks; workspace Root wheel (Launcher/Slide);
