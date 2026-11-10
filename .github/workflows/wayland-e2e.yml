@@ -85,9 +85,14 @@ jobs:
 
       - name: Launch Rovyl
         run: |
-          nohup npx electron . --ozone-platform=wayland --no-sandbox > /tmp/rovyl.log 2>&1 &
-          sleep 15
-          pgrep -f "electron ." >/dev/null || { echo "app died"; exit 1; }
+          NODE_ENV=production nohup npx electron . --ozone-platform=wayland --no-sandbox > /tmp/rovyl.log 2>&1 &
+          APP_PID=$!
+          for i in $(seq 1 30); do
+            grep -q 'Main window ready (stabilized)' /tmp/rovyl.log && break
+            kill -0 "$APP_PID" 2>/dev/null || { cat /tmp/rovyl.log; exit 1; }
+            sleep 1
+          done
+          grep -q 'Main window ready (stabilized)' /tmp/rovyl.log || { cat /tmp/rovyl.log; exit 1; }
 
       - name: Capture evidence
         if: always()
@@ -95,7 +100,7 @@ jobs:
           mkdir -p evidence
           WAYLAND_DISPLAY="$WAYLAND_DISPLAY" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
             grim evidence/idle.png 2>/dev/null || true
-          grep -a "trigger captured\|Main window ready" ~/.zenith-radial-menu/diagnostic.log | tail -5 > evidence/diag.txt || true
+          cp ~/.rovyl/diagnostic.log evidence/diag.txt 2>/dev/null || true
           cp /tmp/rovyl.log evidence/ 2>/dev/null || true
           cp /tmp/sway.log evidence/ 2>/dev/null || true
 
