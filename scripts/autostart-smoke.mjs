@@ -64,4 +64,38 @@ assert.deepEqual(calls, [], "a duplicate login launch stays in the tray");
 handler(null, ["rovyl"]);
 await new Promise(setImmediate);
 assert.deepEqual(calls, ["ready", "ensure-window", "open-settings"], "manual relaunch uses the shared Settings reveal path");
-console.log("autostart-smoke: OK (desktop entry, AppImage, fallback, disabled, duplicate login, manual relaunch)");
+
+const showStart = source.indexOf('ipcMain.on("show-window",');
+const showEnd = source.indexOf('\n});', showStart) + '\n});'.length;
+assert.ok(showStart >= 0 && showEnd > showStart);
+let showHandler;
+let finishCreatingWindow;
+const windowReady = new Promise((resolve) => { finishCreatingWindow = resolve; });
+let reveals = 0;
+const win = {
+  isDestroyed: () => false,
+  show: () => { reveals += 1; },
+  focus: () => {},
+  setOpacity: () => {},
+  webContents: { setBackgroundThrottling: () => {}, focus: () => {}, invalidate: () => {} },
+};
+const showContext = {
+  ipcMain: { on: (_name, callback) => { showHandler = callback; } },
+  mainWindow: null,
+  windowBuriedPassive: true,
+  ensureMainWindow: async () => { await windowReady; showContext.mainWindow = win; return win; },
+  applyMousePolicyAfterReveal: () => {},
+  diagLog: () => {},
+};
+vm.runInNewContext(source.slice(showStart, showEnd), showContext);
+const pendingReveal = showHandler();
+assert.equal(reveals, 0, "a startup reveal waits for the window to be assigned");
+finishCreatingWindow();
+await pendingReveal;
+assert.equal(reveals, 1, "the first renderer request must not be lost during window creation");
+await showHandler();
+assert.equal(reveals, 2, "later requests still reveal the existing window");
+showContext.ensureMainWindow = async () => { throw new Error("creation failed"); };
+await showHandler();
+assert.equal(reveals, 2, "window creation failure does not reveal a stale window or reject the IPC handler");
+console.log("autostart-smoke: OK (login registration, duplicate/manual launch, early reveal, creation failure)");

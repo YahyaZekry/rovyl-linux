@@ -9315,7 +9315,14 @@ const installUpdateNow = () => {
 
 ipcMain.on("install-update-now", installUpdateNow);
 
-ipcMain.on("show-window", () => {
+ipcMain.on("show-window", async () => {
+  // The renderer can request its first reveal before createWindow has finished.
+  try {
+    await ensureMainWindow();
+  } catch (e) {
+    diagLog(`[Settings] Window creation failed: ${e.message}`);
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
   windowBuriedPassive = false;

@@ -93,6 +93,11 @@ jobs:
             sleep 1
           done
           grep -q 'Main window ready (stabilized)' /tmp/rovyl.log || { cat /tmp/rovyl.log; exit 1; }
+          for i in $(seq 1 30); do
+            grep -q 'Settings on screen' ~/.rovyl/diagnostic.log && break
+            sleep 1
+          done
+          grep -q 'Settings on screen' ~/.rovyl/diagnostic.log || { cat ~/.rovyl/diagnostic.log; exit 1; }
 
       - name: Capture evidence
         if: always()
