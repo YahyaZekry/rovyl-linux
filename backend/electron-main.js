@@ -3080,6 +3080,11 @@ function setRadialTriggerCapture(virtualKey, mode, slop, clickHoldMs, clickDragP
   if (process.platform === "linux") {
     /** The evdev TRIGGER carries menuMin + dbl instead of modMask: modifier-based recorded
      * triggers are a Windows capability for now — the helper watches bare buttons only. */
+    if (modMask || ![MOUSE_TRIGGER_VK.middle, MOUSE_TRIGGER_VK.x1, MOUSE_TRIGGER_VK.x2].includes(virtualKey)) {
+      diagLog("[MouseTrigger] Unsupported Linux binding; choose Wheel, Mouse 4, or Mouse 5 in Settings.");
+      writeRadialMouseBlocker("TRIGGER OFF");
+      return;
+    }
     const menuMinMs = Math.max(0, Number(menuHoldMinMsSetting) || 0);
     const dblMs = dblClickOpensMenuSetting ? DOUBLE_CLICK_WINDOW_MS : 0;
     writeRadialMouseBlocker(
@@ -4405,9 +4410,9 @@ app.whenReady().then(async () => {
    * before initialization ("rearmRadialTrigger is not defined" in the save log). */
   const rearmRadialTrigger = () => {
     if (!mouseHook) return;
-    const virtualKey = MOUSE_TRIGGER_VK[cachedRadialFlags.mouseTriggerButton] ?? MOUSE_TRIGGER_VK.middle;
-    const mode = cachedRadialFlags.mouseTriggerMode === "click" ? "click" : "hold";
-    setRadialTriggerCapture(virtualKey, mode, TRIGGER_PASSTHROUGH_SLOP_PX, MMB_CLICK_BACKSTOP_MS, MMB_CLICK_DRAG_PX);
+    const binding = parseMouseTrigger(cachedRadialFlags.mouseTriggerButton) || parseMouseTrigger(DEFAULT_MOUSE_TRIGGER);
+    const mode = mouseTriggerAllowsHold(binding.token) && cachedRadialFlags.mouseTriggerMode === "hold" ? "hold" : "click";
+    setRadialTriggerCapture(binding.vk, mode, TRIGGER_PASSTHROUGH_SLOP_PX, MMB_CLICK_BACKSTOP_MS, MMB_CLICK_DRAG_PX, binding.modMask);
   };
   try {
     const cp = path.join(app.getPath("userData"), "config-v2.json");

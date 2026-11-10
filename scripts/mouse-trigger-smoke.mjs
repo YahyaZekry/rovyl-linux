@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 
 /**
  * The trigger binding is parsed in three languages: TypeScript for the settings recorder and the
@@ -123,6 +124,33 @@ check(() => assert.ok(cs.includes("parts.Length >= 4 && parts.Length <= 7"),
 
 const mainJs = readFileSync(new URL("../backend/electron-main.js", import.meta.url), "utf8");
 
+const captureStart = mainJs.indexOf("function setRadialTriggerCapture(");
+const captureEnd = mainJs.indexOf("\nfunction clearRadialTriggerCapture()", captureStart);
+const rearmStart = mainJs.indexOf("  const rearmRadialTrigger = () => {");
+const rearmEnd = mainJs.indexOf("\n  };", rearmStart) + "\n  };".length;
+assert.ok(captureStart >= 0 && captureEnd > captureStart && rearmStart >= 0 && rearmEnd > rearmStart);
+function captureFor(platform, token, mode = "hold") {
+  const commands = [];
+  vm.runInNewContext(`${mainJs.slice(captureStart, captureEnd)}\n${mainJs.slice(rearmStart, rearmEnd)}\nrearmRadialTrigger();`, {
+    process: { platform },
+    MOUSE_TRIGGER_VK, DEFAULT_MOUSE_TRIGGER, parseMouseTrigger, mouseTriggerAllowsHold,
+    cachedRadialFlags: { mouseTriggerButton: token, mouseTriggerMode: mode },
+    mouseHook: { active: true },
+    ensureRadialMouseBlocker: () => {},
+    writeRadialMouseBlocker: (line) => commands.push(line),
+    diagLog: () => {},
+    menuHoldMinMsSetting: 350, dblClickOpensMenuSetting: false, DOUBLE_CLICK_WINDOW_MS: 300,
+    TRIGGER_PASSTHROUGH_SLOP_PX: 8, MMB_CLICK_BACKSTOP_MS: 1000, MMB_CLICK_DRAG_PX: 10,
+  });
+  return commands;
+}
+check(() => assert.deepEqual(captureFor("linux", "x1"), ["TRIGGER 5 hold 8 1000 10 350 0"]));
+check(() => assert.deepEqual(captureFor("linux", "x2", "click"), ["TRIGGER 6 click 8 1000 10 350 0"]));
+check(() => assert.deepEqual(captureFor("linux", "Ctrl+x1"), ["TRIGGER OFF"], "unsupported modifiers cannot become a bare trigger"));
+check(() => assert.deepEqual(captureFor("linux", "Ctrl+left"), ["TRIGGER OFF"], "unsupported buttons cannot become middle-click"));
+check(() => assert.deepEqual(captureFor("win32", "Ctrl+x1"), ["TRIGGER 5 hold 8 1000 10 1"], "rearming preserves the modifier mask"));
+check(() => assert.deepEqual(captureFor("win32", "Ctrl+left"), ["TRIGGER 1 click 8 1000 10 1"], "rearming preserves click-only behavior"));
+
 check(() => assert.ok(
   mainJs.includes("`TRIGGER ${virtualKey} ${mode} ${slop} ${clickHoldMs} ${clickDragPx} ${modMask || 0}`"),
   "the TRIGGER command main writes no longer carries the modifier mask"));
@@ -134,6 +162,8 @@ check(() => assert.ok(/mouseTriggerAllowsHold\(binding\.token\)[\s\S]{0,120}"hol
 /* ── Settings does not offer a gesture it cannot arm ─────────────────────── */
 
 const panel = readFileSync(new URL("../src/components/PrecisionSettings.tsx", import.meta.url), "utf8");
+
+check(() => assert.ok(panel.includes("kind: isLinux ? 'segmented' : 'mouseButton'"), "Linux offers only the helper's supported buttons"));
 
 check(() => assert.ok(/const triggerAllowsHold = mouseTriggerAllowsHold\(/.test(panel),
   "the panel stopped asking whether this binding has a gesture to choose"));

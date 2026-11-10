@@ -1102,10 +1102,17 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                  * would take the primary click or the context menu from every application at once.
                  */
                 key: 'mouseButton', configKey: 'mouseTriggerButton' as const, group: 'Mouse', title: 'Trigger button',
-                description: triggerAllowsHold
+                description: isLinux
+                  ? 'Choose the wheel button or a side button. Modifier combinations and left/right buttons are not supported on Linux. If none is selected, choose a supported button to enable the mouse trigger.'
+                  : triggerAllowsHold
                   ? 'Press Record, then press the button you want. Side buttons are usually free; left and right need Ctrl, Alt, Shift or Win held with them.'
                   : 'Press Record, then press the button you want. Left and right always open the wheel on the click — holding one down is a drag everywhere else in Microsoft Windows, so there is no gesture to choose.',
-                kind: 'mouseButton', current: config.mouseTriggerButton ?? DEFAULT_MOUSE_TRIGGER,
+                kind: isLinux ? 'segmented' : 'mouseButton', current: config.mouseTriggerButton ?? DEFAULT_MOUSE_TRIGGER,
+                choices: isLinux ? [
+                  { value: 'middle', label: 'Wheel' },
+                  { value: 'x1', label: 'Mouse 4' },
+                  { value: 'x2', label: 'Mouse 5' },
+                ] : undefined,
                 keywords: 'wheel middle back forward mouse4 mouse5 side button macro record bind',
                 /**
                  * The gesture travels with the button, in one `setConfig`.
