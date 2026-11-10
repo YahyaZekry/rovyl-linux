@@ -34,3 +34,7 @@
 `.github/workflows/sync-fork.yml` runs Mondays at 03:00 UTC (05:00 Cairo) or on manual dispatch. It fetches upstream and runs `scripts/upstream-review.mjs`; the Markdown report is the job summary and an artifact. Read-only repository permissions; no merges, pushes, or issue comments. Incoming counts include selectively ported commits whose original hashes are not ancestors. Upstream 2.x is Windows-native; compatible changes are ported selectively into this Linux Electron app.
 
 Linux desktop launches wait for `gio` to exit successfully, with `gtk-launch` as fallback on failure or a missing launcher. Each launcher has a five-second timeout; success confirms launcher acceptance, not the launched application's later health.
+
+## Settings first reveal (2026-11-10)
+
+The renderer can send `show-window` before the main window is assigned (creation waits for ready-to-show plus 200 ms). Its IPC handler must await the shared `ensureMainWindow` promise rather than returning when mainWindow is null; otherwise a manual cold launch stays invisibly in the tray. Covered by autostart-smoke early-reveal and creation-failure cases, plus the Wayland CI requirement that Settings actually reaches the screen. Login startup still leaves the renderer panel closed via `--opened-at-login`.

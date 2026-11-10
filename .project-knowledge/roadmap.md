@@ -7,9 +7,9 @@
 
 Maintain the Linux Electron app independently of upstream's Windows-native rewrite.
 
-1. Verify that the installed startup fix stays in the tray at the next real login, then manually relaunch Rovyl to confirm Settings opens.
+1. Retest the installed cold-manual-launch reveal fix (467381e), then verify the next real login stays in the tray. Manual Settings display is now verified in headless Wayland; real desktop acceptance remains pending.
 2. Review-only upstream workflow is deployed and its first report passed. Continue selective ports; do not merge the upstream archive/Rust restructuring.
-3. Release the startup, launcher-error and supported-binding fixes after live acceptance. All Linux package builds and isolated Wayland checks passed; see release-checklist.md. User acceptance remains untested as of 2026-11-10.
+3. Release the startup, launcher-error and supported-binding fixes after live acceptance. All Linux package builds and isolated Wayland checks passed; see release-checklist.md. User reported the original cold-manual-launch failure; the new reveal fix awaits their retest as of 2026-11-10.
 4. Keep deb udev/postinst polish and Windows compatibility checks separate from this Linux release.
 
 **Recently shipped:** v1.16 upstream merge (by hand); Linux system dock with live readings
