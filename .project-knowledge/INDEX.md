@@ -7,9 +7,9 @@
 
 ## What This Project Does
 
-Rovyl is a radial launcher for Windows: hold the middle mouse button anywhere, a wheel of
-shortcuts blooms mid-screen, aim, release to launch apps/folders/files/URLs/commands.
-Fully offline except license checks and favicons. This fork is being ported to Linux.
+This fork maintains Rovyl as a Linux radial launcher: hold the middle mouse button, aim,
+and release to launch apps, folders, files, URLs, or commands. It uses Electron/React with
+a native Linux input helper; upstream Windows-native changes are reviewed for selective ports.
 
 ---
 
@@ -24,7 +24,8 @@ Fully offline except license checks and favicons. This fork is being ported to L
 | `features.md` | User-facing features and workflows | Understanding what's built |
 | `integrations.md` | License API, favicons, weather, updater feed, VS Code MRU | Touching network calls or external data |
 | `components.md` | Renderer component inventory | Adding/changing UI |
-| `roadmap.md` | Linux port plan, known bugs, TODO ids | Starting any task — pre-flight check |
+| `roadmap.md` | Linux maintenance plan, known bugs, TODO ids | Starting any task — pre-flight check |
+| `release-checklist.md` | Proposed maintenance release, verified CI and remaining acceptance | Preparing or publishing the next Linux release |
 | `history.md` | Decisions, past fixes, removals | Debugging, reviewing why code is the way it is |
 | `sessions.md` | Session log | Reviewing work history |
 
