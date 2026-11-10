@@ -37,7 +37,7 @@ jobs:
       - name: Smoke suite
         run: |
           set -e
-          for t in autostart upstream-review tray-menu radial-filter backdrop-dim icon-store \
+          for t in autostart linux-desktop upstream-review tray-menu radial-filter backdrop-dim icon-store \
                    persistence-mirror i18n select-menu keyboard-nav page-title \
                    fullscreen-bounds foreground-snapshot launch-result launch-failure \
                    file-shortcut persistence-normalize icon-map start-app-launch \

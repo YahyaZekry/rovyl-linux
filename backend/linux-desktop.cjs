@@ -167,26 +167,19 @@ function readIconDataUrl(desktopId) {
  * Launch a desktop entry the way the shell would: `gio launch` on the file, falling back to
  * `gtk-launch` on the id. Detached — the child is the app, not ours.
  */
-function launchDesktopId(desktopId) {
+async function launchDesktopId(desktopId) {
   const id = String(desktopId || "").replace(new RegExp(`^${APPS_SCHEME}`), "");
   const { spawn } = require("child_process");
-  return new Promise((resolve) => {
-    const file = findDesktopFile(id);
-    const trySpawn = (cmd, args) => {
-      const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
-      child.on("error", () => resolve(false));
-      child.on("spawn", () => {
-        child.unref();
-        resolve(true);
-      });
-    };
-    if (file) {
-      trySpawn("gio", ["launch", file]);
-      // gio launch failed synchronously? The error handler already resolved false.
-    } else {
-      trySpawn("gtk-launch", [id]);
-    }
+  const run = (cmd, args) => new Promise((resolve) => {
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+    const finish = (success) => { clearTimeout(timer); resolve(success); };
+    const timer = setTimeout(() => { child.kill(); finish(false); }, 5000);
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0));
   });
+  const file = findDesktopFile(id);
+  if (file && await run("gio", ["launch", file])) return true;
+  return run("gtk-launch", [id]);
 }
 
 /** First present terminal emulator, in the order a desktop user would expect. */

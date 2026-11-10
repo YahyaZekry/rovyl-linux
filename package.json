@@ -33,6 +33,7 @@
     "test:start-app-launch": "node scripts/start-app-launch-smoke.mjs",
     "test:tray-menu": "node scripts/tray-menu-smoke.mjs",
     "test:autostart": "node scripts/autostart-smoke.mjs",
+    "test:linux-desktop": "node scripts/linux-desktop-smoke.mjs",
     "test:upstream-review": "node scripts/upstream-review-smoke.mjs",
     "test:exe-branding": "node scripts/exe-branding-smoke.mjs",
     "test:radial-filter": "node scripts/radial-filter-smoke.mjs",
