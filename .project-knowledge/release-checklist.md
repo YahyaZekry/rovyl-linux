@@ -34,4 +34,4 @@ The user reported these checks are not tested yet on 2026-11-10. No release tag 
 1. Bump package.json and package-lock.json together to 1.17.1 and commit the accepted release state.
 2. Tag that commit v1.17.1 and push to GitHub. The Linux builds workflow packages and attaches AppImage/deb assets to the release.
 3. Verify the release assets and the subsequent AUR publish run; confirm the AUR version and source checksum.
-4. GitLab mirroring separately needs renewed authentication. Its saved credential was rejected; GitHub already contains the maintenance changes.
+4. GitLab contents are synchronized through the connected GitLab (Beta) account; verify matching file trees after each connector sync. Main commit IDs differ because GitLab creates its own sync commit. Terminal Git push access remains unavailable; no additional key setup is needed for connector-based updates.

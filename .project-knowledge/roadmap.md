@@ -21,7 +21,6 @@ taskbar icon fix; two-sided calibration + double-click option; settings category
 
 ## Known Bugs
 
-- [ ] GitLab mirror is still at `5aea117`; GitHub contains the maintenance fixes. Dedicated SSH deploy key prepared; awaiting user authorization in project Deploy keys, then push branches/tags and verify parity. *(checked: 2026-11-10)*
 - [ ] Chaotic-AUR acceptance remains pending: GitHub #4539 is open (`needs-triage`), while GitLab MR !3910 is closed without merge. AUR itself is already live at 1.17.0-1. *(checked: 2026-11-10)*
 
 - [ ] Hotplug rescan is flaky when a device appears within ~100 ms of helper start (udev ACL lands after node creation); fine for the boot case, matters for BT reconnect — needs a retry-until-grab loop per device *(found: 2026-09-14)*
