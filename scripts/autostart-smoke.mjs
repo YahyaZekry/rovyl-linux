@@ -63,7 +63,9 @@ await new Promise(setImmediate);
 assert.deepEqual(calls, [], "a duplicate login launch stays in the tray");
 handler(null, ["rovyl"]);
 await new Promise(setImmediate);
-assert.deepEqual(calls, ["ready", "ensure-window", "open-settings"], "manual relaunch uses the shared Settings reveal path");
+assert.deepEqual(calls, [], "manual relaunch must not open Settings");
+const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+assert.ok(appSource.includes('const [isSettingsOpen, setIsSettingsOpen] = useState(false);'), "normal startup leaves Settings closed");
 
 const showStart = source.indexOf('ipcMain.on("show-window",');
 const showEnd = source.indexOf('\n});', showStart) + '\n});'.length;

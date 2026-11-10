@@ -7,9 +7,9 @@
 
 Maintain the Linux Electron app independently of upstream's Windows-native rewrite.
 
-1. Retest the installed cold-manual-launch reveal fix (467381e), then verify the next real login stays in the tray. Manual Settings display is now verified in headless Wayland; real desktop acceptance remains pending.
-2. Review-only upstream workflow is deployed and its first report passed. Continue selective ports; do not merge the upstream archive/Rust restructuring.
-3. Release the startup, launcher-error and supported-binding fixes after live acceptance. All Linux package builds and isolated Wayland checks passed; see release-checklist.md. User reported the original cold-manual-launch failure; the new reveal fix awaits their retest as of 2026-11-10.
+1. Verify the user-corrected quiet-start behavior: normal manual/login/duplicate launches stay in the tray, and tray Open Settings opens the panel. Corrected AppImage installed; real-desktop retest pending.
+2. Upstream integration remains incomplete: 73 incoming commits were not merged; the workflow only reports them. Twenty-eight commits belong to the last compatible Electron-era line through 1.19. Decide which useful changes to port; keep the Windows-native rewrite out of this Linux app.
+3. Release the startup, launcher-error and supported-binding fixes after live acceptance. All Linux package builds and isolated Wayland checks passed; see release-checklist.md. Manual auto-opening was removed at the user's explicit correction on 2026-11-10; quiet-start acceptance is pending.
 4. Keep deb udev/postinst polish and Windows compatibility checks separate from this Linux release.
 
 **Recently shipped:** v1.16 upstream merge (by hand); Linux system dock with live readings

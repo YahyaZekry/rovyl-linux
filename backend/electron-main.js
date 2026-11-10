@@ -1183,26 +1183,11 @@ if (!gotTheLock) {
    * Deliberately empty. The installer is running and this process exits as soon as the spawn is
    * confirmed; registering `second-instance` would only hand it a window it is never going to have.
    *
-   * After the lock, not before: when Rovyl is already open a launch is a second instance asking for
-   * focus, and it must not start an installer over the running app.
+   * After the lock: a duplicate launch must not start an installer over the running app.
    */
 } else {
-  app.on("second-instance", (_event, argv) => {
-    // A late login launch must not open Settings over an already-running instance.
-    if (Array.isArray(argv) && argv.includes(LOGIN_LAUNCH_ARG)) {
-      diagLog("Second instance was the login-item duplicate — staying in the tray.");
-      return;
-    }
-    Promise.resolve()
-      .then(async () => {
-        await app.whenReady();
-        await ensureMainWindow();
-        openSettingsFromMainProcess();
-      })
-      .catch((e) => {
-        diagLog(`[SecondInstance] reveal failed: ${e.message}`);
-        console.error("second-instance reveal failed:", e);
-      });
+  app.on("second-instance", () => {
+    diagLog("Rovyl is already running; keeping its current window state.");
   });
 }
 

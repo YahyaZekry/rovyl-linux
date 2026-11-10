@@ -1,9 +1,9 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-11-10 (GitLab content sync verified)
+> Last updated: 2026-11-10 (user-corrected quiet startup and explicit upstream merge status)
 > Status: Active
 > Stack: Electron 44.3.0 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
-> Current goal: verify live startup acceptance, then release the tested Linux maintenance fixes; GitHub/GitLab files are synchronized, AUR is live, and Chaotic-AUR acceptance remains pending
+> Current goal: verify quiet manual/login startup and explicit tray Settings; upstream integration is incomplete (73 commits unmerged). AUR is live and Chaotic-AUR acceptance remains pending
 
 ## What This Project Does
 

@@ -13,7 +13,7 @@
 | Updater | Active | electron-updater (NsisUpdater), GitHub releases; helpers stopped before `quitAndInstall` |
 | Tray | Active | `tray-menu.cjs` builds template (pure JS); dark/light icon variants |
 | Taskbar overlay | Windows-only | hides taskbar regions while wheel is up (`taskbar-control.ps1` + `taskbar-overlay.cjs`) |
-| Autostart | Active | Linux: XDG `~/.config/autostart/rovyl.desktop`; Windows: `app.setLoginItemSettings`. Both pass `--opened-at-login` to keep login starts in the tray; late login duplicates do not reveal Settings. Regression-tested 2026-11-10; live login not verified. |
+| Autostart | Active | Linux: XDG `~/.config/autostart/rovyl.desktop`; Windows: `app.setLoginItemSettings`. Both pass `--opened-at-login` for launch-context detection. Normal manual/login launches and duplicates stay quiet; Settings is opened explicitly. Regression-tested 2026-11-10; live login not verified. |
 | i18n | Active | 10 languages in `src/i18n/translations.ts`; wheel's 6 live strings in `src/strings.ts` (bundle guard in build) |
 
 ## Linux port mapping
@@ -37,4 +37,8 @@ Linux desktop launches wait for `gio` to exit successfully, with `gtk-launch` as
 
 ## Settings first reveal (2026-11-10)
 
-The renderer can send `show-window` before the main window is assigned (creation waits for ready-to-show plus 200 ms). Its IPC handler must await the shared `ensureMainWindow` promise rather than returning when mainWindow is null; otherwise a manual cold launch stays invisibly in the tray. Covered by autostart-smoke early-reveal and creation-failure cases, plus the Wayland CI requirement that Settings actually reaches the screen. Login startup still leaves the renderer panel closed via `--opened-at-login`.
+The renderer can send `show-window` before the main window is assigned (creation waits for ready-to-show plus 200 ms). Its IPC handler must await the shared `ensureMainWindow` promise rather than returning when mainWindow is null; otherwise an early explicit Settings request can be dropped. Normal launches intentionally stay in the tray (user correction below). Covered by autostart-smoke early-reveal and creation-failure cases, plus the Wayland CI requirement that Settings actually reaches the screen. Login startup still leaves the renderer panel closed via `--opened-at-login`.
+
+## User-corrected startup behavior (2026-11-10)
+
+`isSettingsOpen` starts false for both manual and login launches. Duplicate instances do not open or focus Settings. Tray Open Settings and the existing explicit Settings entry points still reveal the panel, using the guarded show-window handler. First-install onboarding retains its existing behavior. Earlier notes treating a quiet manual launch as a bug reflect the assistant's mistaken assumption, not the requested behavior.
