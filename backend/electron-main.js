@@ -1187,21 +1187,22 @@ if (!gotTheLock) {
    * focus, and it must not start an installer over the running app.
    */
 } else {
-  app.on("second-instance", () => {
-    diagLog("Second instance launch detected — focusing existing window.");
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      try {
-        windowBuriedPassive = false;
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.setOpacity(1);
-        applyMousePolicyAfterReveal(mainWindow);
-        mainWindow.setSkipTaskbar(false);
-        mainWindow.show();
-        mainWindow.focus();
-      } catch (e) {
-        console.error("second-instance focus failed:", e);
-      }
+  app.on("second-instance", (_event, argv) => {
+    // A late login launch must not open Settings over an already-running instance.
+    if (Array.isArray(argv) && argv.includes(LOGIN_LAUNCH_ARG)) {
+      diagLog("Second instance was the login-item duplicate — staying in the tray.");
+      return;
     }
+    Promise.resolve()
+      .then(async () => {
+        await app.whenReady();
+        await ensureMainWindow();
+        openSettingsFromMainProcess();
+      })
+      .catch((e) => {
+        diagLog(`[SecondInstance] reveal failed: ${e.message}`);
+        console.error("second-instance reveal failed:", e);
+      });
   });
 }
 
@@ -4138,7 +4139,7 @@ app.whenReady().then(async () => {
         fs.mkdirSync(autostartDir, { recursive: true });
         fs.writeFileSync(
           autostartFile,
-          ["[Desktop Entry]", "Type=Application", "Name=Rovyl", `Exec=${execLine}`,
+          ["[Desktop Entry]", "Type=Application", "Name=Rovyl", `Exec=${execLine} ${LOGIN_LAUNCH_ARG}`,
            "Terminal=false", "X-GNOME-Autostart-enabled=true", "Categories=Utility;", ""].join("\n"),
           "utf8",
         );
@@ -5366,8 +5367,8 @@ app.whenReady().then(async () => {
     }
   });
 
-  // 2. Create Window
-  mainWindow = await createWindow();
+  // Share window creation with manual launches arriving during startup.
+  mainWindow = await ensureMainWindow();
   if (process.platform === "linux" && mainWindow && !mainWindow.isDestroyed()) {
     /** X11 reads the window's own icon; Wayland matches app_id→desktop-file→icon-theme. */
     try { mainWindow.setIcon(isDev ? path.join(__dirname, "../public/icon.png") : path.join(__dirname, "../dist/icon.png")); } catch { /* cosmetic */ }
