@@ -85,8 +85,7 @@ jobs:
 
       - name: Launch Rovyl
         run: |
-          ELECTRON_OZONE_PLATFORM_HINT=auto ELECTRON_DISABLE_SANDBOX=1 \
-          nohup npx electron . > /tmp/rovyl.log 2>&1 &
+          nohup npx electron . --ozone-platform=wayland --no-sandbox > /tmp/rovyl.log 2>&1 &
           sleep 15
           pgrep -f "electron ." >/dev/null || { echo "app died"; exit 1; }
 
