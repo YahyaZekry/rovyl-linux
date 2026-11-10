@@ -28,7 +28,7 @@ src/                      Renderer (React)
   hooks/useIconHealing.ts, utils/* (workspaceRadial, taskbarOverlay, windowsLaunchCommand, …)
   i18n/ (languages, translations 10 langs, useTranslation), strings.ts (6 live wheel strings)
   iconMap.ts (curated + lazy lucide set), iconRef.ts, persistenceMirror.ts, siteFavicon.ts, types.ts, defaults.ts
-scripts/                  build, launch, verify, ~25 smoke tests, release
+scripts/                  build, launch, verify, smoke tests, release; upstream-review.mjs produces the read-only upstream report
 nsis/installer.nsh        installer customisation
 docs/ARCHITECTURE.md      non-obvious design notes — read before touching main-process behaviour
 docs/wayland-port-plan.md Wayland research + phased plan + CI/DE-test workflow design
@@ -45,3 +45,8 @@ TODO.md                   improvement backlog with stable §.n ids (source of tr
 | `src/components/RadialMenu.tsx` | The wheel and the entire dwell/instant-activate engine |
 | `docs/ARCHITECTURE.md` | Why the windowing handshake and trigger hook are shaped the way they are |
 | `TODO.md` | Backlog with stable ids (`§.n`); open items are the known-bugs list |
+
+## Maintenance additions (2026-11-10)
+
+- `.github/workflows/sync-fork.yml` — review report only; no automatic upstream merges or pushes.
+- `scripts/autostart-smoke.mjs`, `linux-desktop-smoke.mjs`, `upstream-review-smoke.mjs` — isolated startup, launcher and report regression checks.

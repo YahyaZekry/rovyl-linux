@@ -1,6 +1,6 @@
 # External Integrations & Data Contracts
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-14
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
 
 ## License API (`rovyl-red.vercel.app`)
 
@@ -17,7 +17,7 @@
 
 ## Updater
 
-- electron-updater → GitHub releases `arshit09/rovyl`; NSIS feed on Windows; Linux needs AppImage/deb feed decision
+- electron-updater → GitHub releases `YahyaZekry/rovyl-linux` (package.json publish configuration); NSIS feed on Windows; Linux needs AppImage/deb feed decision
 
 ## VS Code family `state.vscdb`
 

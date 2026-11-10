@@ -1,6 +1,6 @@
 # Systems
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-14
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
 
 | System | Status | Details |
 |--------|--------|---------|
@@ -13,12 +13,12 @@
 | Updater | Active | electron-updater (NsisUpdater), GitHub releases; helpers stopped before `quitAndInstall` |
 | Tray | Active | `tray-menu.cjs` builds template (pure JS); dark/light icon variants |
 | Taskbar overlay | Windows-only | hides taskbar regions while wheel is up (`taskbar-control.ps1` + `taskbar-overlay.cjs`) |
-| Autostart | Active | `app.setLoginItemSettings({openAtLogin})` |
+| Autostart | Active | Linux: XDG `~/.config/autostart/rovyl.desktop`; Windows: `app.setLoginItemSettings`. Both pass `--opened-at-login` to keep login starts in the tray; late login duplicates do not reveal Settings. Regression-tested 2026-11-10; live login not verified. |
 | i18n | Active | 10 languages in `src/i18n/translations.ts`; wheel's 6 live strings in `src/strings.ts` (bundle guard in build) |
 
-## Linux port mapping (current goal)
+## Linux port mapping
 
-| Windows | Linux (planned) |
+| Windows | Linux |
 |---------|-----------------|
 | `rovyl-helper.exe` (WH_MOUSE_LL, SendInput, SetCursorPos) | C helper: evdev `EVIOCGRAB` on `/dev/input/event*` + `XWarpPointer`, same line protocol |
 | Get-StartApps / .lnk | parse `/usr/share/applications` + `~/.local/share/applications` `.desktop` |
@@ -27,4 +27,10 @@
 | `FG`/`FOCUS` (hwnd) | X11 `_NET_ACTIVE_WINDOW`, `_NET_ACTIVE` message, `_NET_WM_PID`/`_NET_WM_NAME` |
 | machine GUID (registry) | `/etc/machine-id` |
 | taskbar overlay, AUMID, registry uninstall probe | no equivalent — skip on Linux |
-| Wayland | gesture/warp impossible; `globalShortcut` hotkey-only fallback |
+| Wayland | evdev/uinput helper handles gestures and passive keyboard hotkeys; requires input-device access. Cursor placement is approximate; no general native-Wayland pointer warp. |
+
+## Upstream review (2026-11-10)
+
+`.github/workflows/sync-fork.yml` runs Mondays at 03:00 UTC (05:00 Cairo) or on manual dispatch. It fetches upstream and runs `scripts/upstream-review.mjs`; the Markdown report is the job summary and an artifact. Read-only repository permissions; no merges, pushes, or issue comments. Incoming counts include selectively ported commits whose original hashes are not ancestors. Upstream 2.x is Windows-native; compatible changes are ported selectively into this Linux Electron app.
+
+Linux desktop launches wait for `gio` to exit successfully, with `gtk-launch` as fallback on failure or a missing launcher. Each launcher has a five-second timeout; success confirms launcher acceptance, not the launched application's later health.

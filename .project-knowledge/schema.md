@@ -1,6 +1,6 @@
 # Schema (Persistence)
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-14
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
 > All paths under Electron `userData`. Source of truth: `backend/electron-main.js`, `backend/persistence-normalize.cjs`, `backend/icon-store.cjs`, `src/persistenceMirror.ts`.
 
 ## Files in userData
@@ -19,7 +19,7 @@
 |-----|----------|
 | `zenith_config` | full config mirror |
 | `zenith_user` | user/settings mirror |
-| (icon cache key) | icon reference mirror |
+| `zenith_apps` | app list mirror |
 
 Write path: `src/persistenceMirror.ts` — three keys or none; on failure clear all and report via `savePersistenceLog`. Never write mirror before the authoritative disk save.
 

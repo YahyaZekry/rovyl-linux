@@ -1,9 +1,9 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-10-07 (AUR/Chaotic-AUR publishing added)
+> Last updated: 2026-11-10 (sync audit and Linux startup fix)
 > Status: Active
 > Stack: Electron 44.3.0 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
-> Current goal: port complete and user-verified; remaining: deb udev/postinst polish, Windows regression pass; AUR/Chaotic-AUR publishing scaffolded (needs AUR repo creation + secret)
+> Current goal: maintain the Linux Electron app with review-only upstream tracking; verify login startup and release the tested Linux fixes
 
 ## What This Project Does
 

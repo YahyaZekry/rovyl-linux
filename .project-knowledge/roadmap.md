@@ -1,23 +1,16 @@
 # Roadmap
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-10-07
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
 > Forward-looking only. TODO.md is the source of truth for its own backlog (stable §.n ids).
 
 ## Current Goal
 
-The Linux/Wayland port is done and user-verified (wheel, launches, autoscroll, hotkey,
-click-away, autostart, two-sided calibration, double-click option). Remaining work is
-polish and release mechanics:
+Maintain the Linux Electron app independently of upstream's Windows-native rewrite.
 
-1. ~~**Repo rename**~~ — **done 2026-09-21**: remote, package.json repository/publish, and the README clone URL now point at YahyaZekry/rovyl-linux (the C# Windows-side `build.win` config still builds; only its publish target was shared).
-2. **deb polish** — udev rule + `input` group membership in postinst (currently manual).
-3. **Windows regression pass** — the 7-arg TRIGGER silently broke trigger capture there
-   (C# parsers cap at 6 fields) and is now platform-branched (5 args on win32), but the
-   Windows build hasn't been touched since.
-4. **Shelf** — `npm run helper:build` is the Windows csc script; add `helper:build:linux`
-   (gcc `-lX11 -lXtst -ludev`) so the Linux helper isn't compiled by hand.
-5. **AUR go-live** — create `rovyl-bin` on aur.archlinux.org, push initial PKGBUILD/.SRCINFO,
-   add `AUR_SSH_PRIVATE_KEY` GitHub secret (see `aur/README.md`); then PR PKGBUILD to chaotic-aur/PKGBUILDs.
+1. Verify that the installed startup fix stays in the tray at the next real login, then manually relaunch Rovyl to confirm Settings opens.
+2. Deploy the review-only upstream workflow and inspect its first report; do not merge the upstream archive/Rust restructuring.
+3. Release the startup, launcher-error and supported-binding fixes after live acceptance. Packaging and automated checks are recorded in sessions.md.
+4. Keep deb udev/postinst polish and Windows compatibility checks separate from this Linux release.
 
 **Recently shipped:** v1.16 upstream merge (by hand); Linux system dock with live readings
 and desktop-aware panels; panel clearance for docks; workspace Root wheel (Launcher/Slide);
@@ -30,8 +23,8 @@ taskbar icon fix; two-sided calibration + double-click option; settings category
 
 - [ ] Hotplug rescan is flaky when a device appears within ~100 ms of helper start (udev ACL lands after node creation); fine for the boot case, matters for BT reconnect — needs a retry-until-grab loop per device *(found: 2026-09-14)*
 - (found 2026-09-14) `@electron/get` extract silently produced a broken `dist/` on this machine — manual unzip + `path.txt` (`electron`, no newline) fixed; watch for it after fresh `npm install`
-- (found 2026-09-14) On Wayland sessions the XWayland gesture grab only sees X11 clients' pointer events; native Wayland windows never trigger and are immune to BLOCK — by design, documented fallback is hotkey
-- See `TODO.md` open items (unchecked): §1.2 dead `fixedPosition` key, §1.4 offline claim, §1.5 cursor-follow architecture, §2.2–2.5 dead code/licensing decisions, plus §4+ sections
+- Wayland requires evdev/uinput permissions for native-client gestures. The old XWayland-only limitation predates the shipped evdev backend; it is not the current architecture (verified in code 2026-11-10).
+- See `TODO.md` open items (unchecked): §1.2 dead `fixedPosition` key, §1.4 offline claim, §1.5 cursor-follow architecture, §2.3–2.5 HUD/licensing decisions (the §2.2 component files are already absent), plus §4+ sections
 
 ---
 

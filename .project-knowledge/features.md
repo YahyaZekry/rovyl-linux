@@ -1,12 +1,12 @@
 # Features & Workflows
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-30
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
 
 ## Features
 
 - **Hold-to-open wheel** — hold trigger (MMB/side button/global hotkey), wheel blooms centre-screen; click-vs-hold discrimination passes short presses through as normal clicks (docs/ARCHITECTURE.md "Mouse trigger")
 - **Workspaces** — separate wheels, switch with number keys / scroll on hub
-- **Two aiming modes** — `angle` (direction from anywhere) and `cursor` (precision, pointer under icon); confirmation always resolves from the live pointer
+- **Two aiming modes** — `area` (direction from anywhere, optional visible wedges) and `cursor` (precision, pointer under icon); legacy `angle` values migrate to `area`; confirmation always resolves from the live pointer
 - **Launch without clicking (dwell)** — `radialInstantActivate: 'dwell'` launches after holding aim; 5-rule engine in `RadialMenu.tsx` (see history)
 - **App discovery / onboarding** — reads Start Menu apps with real icons into first-run wheel
 - **Shortcut types** — apps, folders, files, URLs (favicon via web), custom commands, terminal-wrapped commands, IDE MRU files (VS Code family `state.vscdb`)
@@ -17,7 +17,7 @@
 - **System dock on Linux** — status service (`backend/system-status.cjs`) has a Linux backend: wpctl (pactl fallback) for volume/mute, `/sys/class/power_supply` for battery, `/sys/class/net` + `/proc/net/wireless` for network/signal; same STATUS contract + 1s cadence as the Windows helper. Panel clicks open the desktop's own settings (XDG_CURRENT_DESKTOP → KDE/GNOME/Cinnamon kcms, standalone fallbacks)
 - **Panel clearance** — `dockPanelClearance` (0–120px slider, Settings → Appearance → Position): lifts both docks off their screen edge; on Wayland the compositor reports no panel struts, so the user states the thickness. Shortcut dock only draws with items in it (`items.length > 0`)
 - **Root wheel mode** (Workspaces, 2+ workspaces) — `workspaceRootMode`: **Launcher** (upstream's home launcher: root shows every workspace, aim to slide in) or **Slide** (root opens on the current workspace's shortcuts; hub-scroll cycles). `getRootRadialApps` + `rootIsPicker` + the scroll guard all honor it; workspace keys and hub-back work in both shapes
-- **v1.16 upstream features** — recorded mouse triggers (shared `mouse-trigger.cjs`; modifier combos are Windows-only on Linux — our TRIGGER carries menuMin+dblMs instead of modMask), recorded workspace keys (`workspaceKeyBindings` replaced the old picker/keys toggle), drag-any-file-to-workspace (`inspect-drop-paths`), area-wedges targeting (`'angle'` mode removed, configs rewritten on read), settings-corner gear, GitHub row (repointed to YahyaZekry/rovyl-linux)
+- **v1.16 upstream features** — recorded mouse triggers (shared `mouse-trigger.cjs`; modifier combos and left/right are Windows-only; Linux offers only Wheel / Mouse 4 / Mouse 5 and refuses unsupported saved bindings instead of silently arming another button), recorded workspace keys (`workspaceKeyBindings` replaced the old picker/keys toggle), drag-any-file-to-workspace (`inspect-drop-paths`), area-wedges targeting (`'angle'` mode removed, configs rewritten on read), settings-corner gear, GitHub row (repointed to YahyaZekry/rovyl-linux)
 - **Tray** — pause/resume, workspaces, settings, quit; autostart toggle
 - **Licensing** — Google OAuth, gate screen without license (vestigial per TODO §2.4)
 

@@ -38,3 +38,11 @@
 | `ZENITH_AGGRESSIVE_GPU` | main process | Aggressive GPU flags (perf debugging) |
 | `ZENITH_DISABLE_HARDWARE_ACCELERATION` | main process | Disable GPU accel |
 | `ZENITH_MOUSE_HOOK_DELAY_MS` | main process | Delay before installing the mouse hook |
+
+## Linux maintenance checks (2026-11-10)
+
+- `npm run test:autostart` — login registration and duplicate/manual launch behavior with mocked Electron.
+- `npm run test:linux-desktop` — real short-lived launcher fixtures: exit codes, fallback and missing tools.
+- `npm run test:mouse-trigger` — shared grammar plus Linux rejection and live-rearm protocol checks.
+- `npm run test:upstream-review` — scratch-repository report checks, including unchanged HEAD/worktree.
+- `node scripts/upstream-review.mjs` — produce the read-only upstream review after fetching `upstream/main`.

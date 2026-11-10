@@ -1,12 +1,12 @@
 # Component Inventory
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-09-14
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
 
 ## src/components/
 
 - `RadialMenu.tsx` — the wheel: slices, aiming (`resolveAimAtPoint`), hub, dwell engine, workspace switching
 - `RadialHud.tsx` — weather/battery/clock HUD (orphaned, TODO §2.3)
-- `PrecisionSettings.tsx` — settings panel (lazy chunk)
+- `PrecisionSettings.tsx` — settings panel (lazy chunk); Linux trigger selection offers Wheel / Mouse 4 / Mouse 5; Windows retains the recorder
 - `FirstRun.tsx` — onboarding
 - `IconPicker.tsx` — lucide icon + custom icon picker (lazy, full icon set chunk)
 - `installedApps.tsx` — installed-app scanner UI (lazy)
@@ -16,6 +16,6 @@
 - `PanelTransition.tsx`, `ErrorOverlays.tsx` — lazy framer-motion isolates
 - `ErrorBoundary.tsx`, `RovylLogo.tsx`
 
-## Dead (TODO §2.2, do not add to)
+## Removed (absence verified 2026-11-10)
 
-- ~~`SettingsModal.tsx`~~ (deleted), `WelcomeScreen.tsx`, `SystemCenter.tsx`, `AppSelector.tsx`
+- ~~`SettingsModal.tsx`, `WelcomeScreen.tsx`, `SystemCenter.tsx`, `AppSelector.tsx`~~ — already absent; the old TODO §2.2 deletion request is stale.
