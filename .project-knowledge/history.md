@@ -110,3 +110,8 @@ User confirmed Area clicks work but stop tracking far from the wheel, and near-p
 Clarified Screen vs Wheel location labels; screen choice hides on one monitor or Near mouse placement. Linux build now compiles the actual helper; updated CI/dev prerequisites for GIO. Validation: actual KDE query succeeds; no-bus failure, coordinate validation/concurrency/fallback/cancelled holds, Area monitor bounds and redundant-control conditions are asserted. Existing targeting, mouse bindings, quiet startup, full-bleed bounds and select-menu checks pass, as does the production build. Physical cursor placement, scaling/multi-monitor and native gesture acceptance still need desktop retesting.
 
 Packaged and atomically installed with backup, then restarted cleanly. Verified the live app/helper match the final source, the packaged helper returns KDE coordinates, and the running renderer reports fullBleed=true for the saved Area configuration. No public release/version bump.
+
+
+### 2026-11-11 — User confirmation and untested display combinations
+
+User enthusiastically confirmed the latest pointer-placement/Area fix works on the current KDE Wayland desktop. This is current-setup acceptance, not evidence for additional monitors or scaling. At the user’s request, README now explicitly marks multi-monitor, fractional scaling (125%/150%) and mixed-scaling checks as untested, with a short manual checklist and expected edge clamping. Corrected README’s stale cursor limitation and Linux mouse-setting labels. Updated current project knowledge and release acceptance; preserved older log entries. Documentation-only change; no application rebuild or settings changes required.

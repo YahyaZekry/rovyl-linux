@@ -35,6 +35,23 @@ KDE Plasma, wlroots compositors (sway, Hyprland, …) and X11 alike. No composit
 | **Expected to work** | Any Wayland compositor, X11 sessions, Electron-supported distros |
 | **Electron** | 44 (native Wayland) |
 
+The latest Near mouse placement and Area tracking fixes were user-confirmed on the
+primary KDE Wayland setup on 2026-11-11. This does not cover the combinations below.
+
+### Still untested
+
+- [ ] **Multiple monitors:** verify Screen → Screen under mouse opens on the correct
+  monitor with Wheel location → Screen center, then try Near mouse on each monitor.
+- [ ] **Display scaling:** repeat Near mouse placement and Area selection at 125% and
+  150%, where supported.
+- [ ] **Mixed scaling:** repeat on two monitors using different scale factors.
+
+Use a harmless shortcut such as a folder. Try the screen center and corners, then
+move far from the wheel's icons: Area highlighting and selection should continue
+across that monitor. Check for sideways jumps, clipped icons or incorrect selections.
+Moving the wheel inward near an edge is expected to keep its icons visible. Restore
+your usual scaling afterward.
+
 ## Install
 
 **AppImage** (any distro):
@@ -63,31 +80,31 @@ sandbox: launch with `ELECTRON_DISABLE_SANDBOX=1`.
 One physical button can't be both "native middle click" and "open the menu", so click
 mode splits presses by how long you hold them:
 
-- **Under the threshold** — a pure native click (closes a browser tab, opens a link).
+- **Under the threshold** — a pure native click (pastes selected text, closes a browser tab or opens a link).
   The menu never opens, and the click lands instantly.
 - **Between the threshold and one second** — the menu opens, and the native click is
   cancelled.
 - **Past one second** — the button is handed to the app (autoscroll, if your desktop has
   it enabled for the `rovyl-fwd-…` device).
 
-No guessing at milliseconds: **Settings → Mouse → Calibrate from your own clicks** walks
+No guessing at milliseconds: **Settings → Activation → Mouse → Calibrate from your own clicks** walks
 you through five real presses — three fast (like closing a tab), two slower (like you
 want the menu) — and sets the boundary between them. You can also drag the threshold by
 hand ("Menu hold threshold").
 
-If one click is too cramped, enable **Double middle click opens the menu**: two quick
-presses open the wheel and a single press always stays native (it lands ~300 ms late
+If one click is too cramped, enable **Open with a double-click**: two quick
+presses open the wheel and a single quick press stays native (it lands ~300 ms late
 while Rovyl listens for the second press).
 
-Full control lives in **Settings → Activation / Mouse**: trigger button, mode, hotkey —
-and "Menu on middle click over apps" turns the menu-off gesture entirely, keeping your
-middle button 100% native. **Launch at startup** (Settings → Startup) writes a real XDG
-autostart entry.
+Full control lives in **Settings → Activation** under Keyboard and Mouse. Turn off
+**Mouse shortcut** to keep the button native and open Rovyl with the keyboard instead.
+**Launch at startup** (Settings → General) writes a real XDG autostart entry.
 
 ## Known limitations on Wayland
 
-- **The wheel opens centred on the screen**, not at the cursor — Wayland gives an app no
-  global cursor position. ("Follow pointer" currently behaves like "main screen".)
+- **Near mouse placement requires KDE Plasma on Wayland.** It reads KWin's compositor
+  coordinates; other Wayland desktops fall back to screen center. Multi-monitor and
+  scaling combinations remain untested (see above).
 - **A taskbar entry appears while the wheel is open** — Wayland has no skip-taskbar
   protocol for normal windows. It disappears when the wheel closes.
 - **It does not appear over fullscreen games** (planned: layer-shell overlay).

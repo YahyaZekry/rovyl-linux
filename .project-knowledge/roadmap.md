@@ -21,7 +21,11 @@ taskbar icon fix; two-sided calibration + double-click option; settings category
 
 ## Known Bugs
 
-- [ ] Desktop acceptance: Area click confirmation after the scrim fix, Pointer hit testing, KDE compositor-based placement/monitor choice and audible feedback. Automated checks and browser Settings checks pass; the former raw-motion estimate was replaced by a live-verified KWin query. Other Wayland desktops fall back to center.
+- User confirmed the Near mouse/Area fix on the current KDE desktop on 2026-11-11. This is not acceptance of every display configuration.
+- [ ] Multiple monitors: correct monitor choice and Near mouse placement on each monitor.
+- [ ] Fractional scaling (125% / 150%, where supported): placement, clipping and Area selection.
+- [ ] Mixed scaling across monitors: repeat the same checks on each screen.
+- [ ] Other desktop acceptance remains separate: Pointer hit testing and audible feedback. Quiet login/manual startup checks remain above. Other Wayland desktops fall back to center for cursor placement.
 
 - [ ] Chaotic-AUR acceptance remains pending: GitHub #4539 is open (`needs-triage`), while GitLab MR !3910 is closed without merge. AUR itself is already live at 1.17.0-1. *(checked: 2026-11-10)*
 
