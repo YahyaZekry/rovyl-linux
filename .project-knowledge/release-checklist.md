@@ -12,6 +12,15 @@
 
 Maintenance: upstream updates now generate a review report instead of automatically merging the Windows-native rewrite. This fork remains a Linux Electron app.
 
+## Latest code CI status (2026-11-11)
+
+For code commit `f90ce7a`, local build/tests/package checks passed and the user confirmed
+the fix on the current desktop. Hosted Tests, Linux builds and Container image failed
+while downloading system dependencies because package servers could not be resolved
+(`security.ubuntu.com` / `archive.ubuntu.com`); these runs did not reach code validation.
+Failed jobs were retried once; results remain pending. Wayland E2E was still running
+when checked. The older successful run links below do not verify this latest commit.
+
 ## Verified
 
 - [x] Local production build, regression checks, and AppImage packaging.
