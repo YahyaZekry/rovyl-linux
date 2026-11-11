@@ -2535,13 +2535,9 @@ const RadialMenuInner: React.FC<RadialMenuProps> = ({
       gestureConsumedRef.current = true;
       const { folderStack, apps, currentLevelApps, onClose, config } = stateRef.current;
 
-      /**
-       * A click on the empty area (the scrim — tiles stop their own events, so anything that
-       * reaches this handler from outside the hub is not on an icon) is a DISMISS, never a
-       * confirm: in angle mode the aim lights a slice from anywhere on screen, and confirming
-       * here turned every "click away to close" into an accidental launch.
-       */
+      // Pointer mode cancels on empty space; Area mode confirms the sector under the click.
       if (
+        (currentLevelApps.length === 0 || (config.radialSelectionMode === 'cursor' && !directionModeRef.current)) &&
         e.target instanceof Element &&
         e.target.classList.contains('zn-radial-scrim')
       ) {

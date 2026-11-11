@@ -34,3 +34,7 @@ Write path: `src/persistenceMirror.ts` — three keys or none; on failure clear 
 ## Optional wheel sound settings
 
 `UIConfig` adds `radialSounds` (false/absent = silent), `radialOpenSound` and `radialHoverSound` (true when absent), `radialOpenSoundId` (`sub-tick` fallback), `radialHoverSoundId` (`thump` fallback), and `radialSoundVolume` (0–100 integer, default 100). Unknown sound IDs fall back; volume rejects non-finite/non-number values and clamps. Existing profiles stay silent; no migration or saved targeting changes.
+
+## Linux mouse-switch compatibility
+
+The single visible Mouse shortcut switch reflects both `enableMouseTrigger` and the legacy `middleClickOpensMenu` gate. Enabling it sets both true; disabling changes only `enableMouseTrigger`. Last-trigger fallback enables both gates if it chooses the mouse route. Stored double-click, hold threshold and targeting preferences are preserved.

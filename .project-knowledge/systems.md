@@ -50,3 +50,7 @@ Pointer targeting is selectable and uses renderer hit testing; the former limita
 ## Wheel audio
 
 `src/utils/radialSound.ts` synthesizes ten optional Web Audio voices, with shared volume/validation and opening/hover rules. RadialMenu, shortcut docks and Settings practice wheel use it; audio suspends after idle. No assets, dependencies or network calls. Master sound is off by default.
+
+## Area clicks and native middle-click (2026-11-11)
+
+The renderer scrim used to cancel every empty-space click, contradicting Area mode. It now cancels only Pointer/empty-wheel clicks; Area passes through the shared sector resolver. Linux single middle-click paste is native behavior preserved by the double-click option; the user explicitly chose to retain it. No native helper timing or injection changes were made.

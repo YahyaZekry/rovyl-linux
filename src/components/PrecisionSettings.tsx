@@ -964,7 +964,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
     });
 
     const keyboardTriggerOn = config.enableKeyboardTrigger !== false;
-    const mouseTriggerOn = config.enableMouseTrigger !== false;
+    const mouseTriggerOn = config.enableMouseTrigger !== false && (!isLinux || config.middleClickOpensMenu !== false);
     /** Left and right are click-only — see `mouseTriggerAllowsHold`. */
     const triggerAllowsHold = mouseTriggerAllowsHold(config.mouseTriggerButton ?? DEFAULT_MOUSE_TRIGGER);
     const numberLaunchOn = config.radialNumberLaunch === true;
@@ -1000,7 +1000,10 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
       const turningOff = key === 'enableKeyboardTrigger' ? keyboardTriggerOn : mouseTriggerOn;
       const otherOn = key === 'enableKeyboardTrigger' ? mouseTriggerOn : keyboardTriggerOn;
       if (turningOff && !otherOn) {
-        setConfig((current) => ({ ...current, [key]: false, [other]: true }));
+        setConfig((current) => ({
+          ...current, [key]: false, [other]: true,
+          ...(isLinux && other === 'enableMouseTrigger' ? { middleClickOpensMenu: true } : {}),
+        }));
         showToast(
           key === 'enableKeyboardTrigger'
             ? 'Switched to the mouse trigger'
@@ -1008,7 +1011,10 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         );
         return;
       }
-      update(key, !turningOff);
+      setConfig((current) => ({
+        ...current, [key]: !turningOff,
+        ...(isLinux && key === 'enableMouseTrigger' && !turningOff ? { middleClickOpensMenu: true } : {}),
+      }));
     };
 
     return {
@@ -1067,17 +1073,15 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
       ],
       trigger: [
-        {
-          key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu', group: 'Activation',
+        ...(!isLinux ? [{
+          key: 'middleClickOpensMenu', configKey: 'middleClickOpensMenu' as const, group: 'Activation',
           title: 'Menu on middle click over apps',
-          description: isLinux
-            ? 'On: a middle click opens the menu (the normal middle-click action is cancelled). Off: middle click behaves exactly like without Rovyl — open the menu with the hotkey.'
-            : 'A quick middle click opens the menu.',
+          description: 'A quick middle click opens the menu.',
           kind: 'bool', enabled: config.middleClickOpensMenu !== false,
           onToggle: () => {
             update('middleClickOpensMenu', !(config.middleClickOpensMenu !== false));
           },
-        },
+        }] as SettingItem[] : []),
         /**
          * Each way in is a switch that owns its own settings, and the settings only exist while
          * the switch is on.
@@ -1092,7 +1096,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
          */
         {
           key: 'keyboard', configKey: 'enableKeyboardTrigger', group: 'Keyboard',
-          title: 'Enable keyboard trigger',
+          title: 'Keyboard shortcut',
           description: 'Open the wheel with a keyboard shortcut.',
           kind: 'bool', enabled: keyboardTriggerOn,
           onToggle: () => toggleTrigger('enableKeyboardTrigger'),
@@ -1130,7 +1134,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           : []),
         {
           key: 'mouse', configKey: 'enableMouseTrigger', group: 'Mouse',
-          title: 'Enable mouse trigger',
+          title: 'Mouse shortcut',
           description: 'Open the wheel with a mouse button.',
           kind: 'bool', enabled: mouseTriggerOn,
           onToggle: () => toggleTrigger('enableMouseTrigger'),
@@ -1184,7 +1188,11 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
               ...(triggerAllowsHold
                 ? ([{
                     key: 'mouseMode', configKey: 'mouseTriggerMode' as const, group: 'Mouse', title: 'Gesture behavior',
-                    description: 'Click keeps the wheel open; hold runs the selection on release.',
+                    description: isLinux
+                      ? config.doubleClickOpensMenu === true && config.mouseTriggerMode !== 'hold'
+                        ? 'Double-click opens the wheel. Single clicks stay native and can paste on Linux.'
+                        : 'Click opens after the calibrated press duration; shorter clicks stay native and can paste on Linux. Hold selects on release.'
+                      : 'Click keeps the wheel open; hold runs the selection on release.',
                     kind: 'segmented', current: config.mouseTriggerMode ?? 'click',
                     choices: [{ value: 'click', label: 'Click' }, { value: 'hold', label: 'Hold' }],
                     onChange: (value) => update('mouseTriggerMode', value as UIConfig['mouseTriggerMode']),
@@ -1192,7 +1200,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
                 : []),
         ...(config.mouseTriggerMode === 'click' && config.doubleClickOpensMenu !== true
           ? [range('menuHoldMinMs', 'Mouse', 'Menu hold threshold',
-              'Middle clicks shorter than this stay pure native (tab close, link). Holds at least this long open the menu instead.',
+              isLinux ? 'Shorter presses stay native, including middle-click paste. A longer press opens Rovyl.' : 'Middle clicks shorter than this stay pure native (tab close, link). Holds at least this long open the menu instead.',
               config.menuHoldMinMs ?? 350, 150, 1000,
               (value) => update('menuHoldMinMs', Math.round(value)),
               (value) => `${Math.round(value)} ms`, 50, 'menuHoldMinMs')]
@@ -1212,8 +1220,10 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         ...(config.mouseTriggerMode === 'click' && !mmbCalibration
           ? [{
               key: 'doubleClickOpensMenu', configKey: 'doubleClickOpensMenu' as const, group: 'Mouse',
-              title: 'Double middle click opens the menu',
-              description: 'Two quick presses open the wheel. A single fast press always stays native (tab close) — it lands ~300 ms late while Rovyl waits for the second press.',
+              title: 'Open with a double-click',
+              description: isLinux
+                ? 'Two quick presses open the wheel. A single click stays native: it may paste selected text, close a tab or open a link, after a short delay.'
+                : 'Two quick presses open the wheel. A single fast press always stays native (tab close) — it lands ~300 ms late while Rovyl waits for the second press.',
               kind: 'bool' as const, enabled: config.doubleClickOpensMenu === true,
               onToggle: () => update('doubleClickOpensMenu', !(config.doubleClickOpensMenu === true)),
             }]
@@ -1412,7 +1422,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           kind: 'bool', enabled: config.showWorkspacePill !== false,
           onToggle: () => update('showWorkspacePill', config.showWorkspacePill === false),
         },
-        {
+        ...(config.radialPlacement !== 'cursor' ? [{
           key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
           /**
            * The consequence, not the mechanism. Nobody opens this panel wanting to know which
@@ -1420,10 +1430,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            * to launch will be sitting on.
            */
           description:
-            waylandLimited && (config.radialPlacement === 'cursor' || config.radialMonitor === 'cursor')
+            waylandLimited && config.radialMonitor === 'cursor'
               ? 'Experimental on Wayland: uses an estimated pointer position. It can drift, and the compositor may choose a different monitor.'
-              : config.radialPlacement === 'cursor'
-              ? 'Appearance opens the wheel under the pointer, so it is already on the screen the pointer is on — this choice has nothing left to decide.'
               : config.radialMonitor === 'cursor'
                 ? 'The wheel opens on the screen the pointer is already on, so what you launch lands where you are working.'
                 : 'The wheel always opens on the main screen, wherever the pointer happens to be.',
@@ -1433,13 +1441,13 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
             { value: 'cursor', label: waylandLimited ? 'Follow pointer (approximate)' : 'Follow pointer' },
           ],
           current: config.radialMonitor === 'cursor' ? 'cursor' : 'primary',
-          onChange: (value) => update('radialMonitor', value as UIConfig['radialMonitor']),
-        },
+          onChange: (value: number | string) => update('radialMonitor', value as UIConfig['radialMonitor']),
+        }] as SettingItem[] : []),
         range('threshold', 'Position', 'Activation zone', 'Cursor distance required to confirm a target.',
           config.activationThreshold, 20, 120, (value) => update('activationThreshold', value), (value) => `${Math.round(value)} px`,
           1, 'activationThreshold'),
         {
-          key: 'radialPlacement', configKey: 'radialPlacement', group: 'Position', title: 'Where it opens',
+          key: 'radialPlacement', configKey: 'radialPlacement', group: 'Position', title: 'Wheel position',
           /**
            * Said as the consequence, because that is the whole of the choice: the same wheel, the
            * same targets, a different distance for the hand. The clamp near an edge is mentioned —

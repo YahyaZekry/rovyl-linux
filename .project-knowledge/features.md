@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Settings polish** — stable scrollbar space and clickable toggle/editor rows; controls stop propagation so a switch click toggles once.
+- **Settings polish** — stable scrollbar space and clickable toggle/editor rows; controls stop propagation so a switch click toggles once. Linux Activation has Keyboard/Mouse groups and one effective Mouse shortcut switch. Monitor hides while At pointer determines the screen.
 - **Optional sounds** — Settings → Sound: opening/hover sound choices, preview wheel and 0–100% volume. Off by default, including existing profiles.
 - **Wayland targeting** — Appearance → Wheel → Targeting → Pointer is selectable. Position → Follow pointer / At pointer now use helper estimates, explicitly approximate; compositor placement and drift need desktop testing.
 
@@ -24,6 +24,10 @@
 - **v1.16 upstream features** — recorded mouse triggers (shared `mouse-trigger.cjs`; modifier combos and left/right are Windows-only; Linux offers only Wheel / Mouse 4 / Mouse 5 and refuses unsupported saved bindings instead of silently arming another button), recorded workspace keys (`workspaceKeyBindings` replaced the old picker/keys toggle), drag-any-file-to-workspace (`inspect-drop-paths`), area-wedges targeting (`'angle'` mode removed, configs rewritten on read), settings-corner gear, GitHub row (repointed to YahyaZekry/rovyl-linux)
 - **Tray** — pause/resume, workspaces, settings, quit; autostart toggle
 - **Licensing** — Google OAuth, gate screen without license (vestigial per TODO §2.4)
+
+## Area click confirmation
+
+Area mode confirms the sector under a left click, including empty space beyond an icon. Pointer mode keeps empty-space click-to-dismiss; the hub, right-click cancellation and main-owned middle-button release keep their existing behavior. An empty wheel can still be dismissed. Regression coverage executes the actual aim and mouseup handlers in `scripts/area-click-smoke.mjs`.
 
 ## Workflows
 

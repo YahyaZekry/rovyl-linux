@@ -92,3 +92,12 @@ Ported settings scrollbar/whole-row polish and optional synthesized wheel sounds
 Validation: production build/windowing/bundle guards, smoke suite (Windows-only window-split skipped), and backend tests passed. Browser checked whole-row toggles without double toggle, stable row position/width across sound expansion, volume/reset, keyboard sound selection, and selectable Pointer/follow-pointer/placement controls; no browser errors. Actual sound output and compositor placement/monitor behavior remain unverified on the real desktop. Full upstream merge remains incomplete.
 
 Packaged AppImage verified against the main-process source and installed atomically with a checksum-matched staged copy and a pre-update backup. The running app was left uninterrupted; the new build takes effect on restart. No public release/version bump.
+
+
+### 2026-11-11 — Area click fix and simpler Linux controls
+
+User reported Area requiring icon clicks, overlapping activation/position controls, and middle-click paste. Found the actual scrim mouseup branch always dismissed instead of confirming Area sectors. Fixed it while preserving Pointer cancellation, empty-wheel dismissal, hub and middle-button routing. Combined the two Linux mouse gates into one effective Mouse shortcut switch; retained the keyboard fallback and Windows legacy behavior. Removed the Linux Activation subgroup, clarified Keyboard/Mouse titles and native-paste descriptions, renamed Wheel position, and hid Monitor while At pointer already chooses the screen. User explicitly chose to keep double-click opening and native single clicks, including Linux paste; no native helper behavior was changed.
+
+The running AppImage source was verified older than the installed update, explaining the obsolete Wayland label in screenshots. Regression checks execute actual aim/mouseup/toggle functions (Area away from icons, Pointer cancellation, empty wheel, legacy flags, last-trigger fallback, Windows independence). Targeting, autostart, mouse bindings, sectors, Wayland-pointer checks and the production build passed. Browser preview verification was unavailable because the browser connection closed; visual/physical acceptance remains pending.
+
+Final AppImage packaged successfully after retrying an overlapping packaging attempt. Installed atomically with backup, then started in the desktop session. Verified the live app’s main/renderer files match the final build and double-click preference remains enabled. Visual/physical checks remain pending; no public release.
