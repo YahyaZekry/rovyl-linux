@@ -2136,7 +2136,7 @@ function showMenuAtCursor(source = "shortcut") {
     cancelIdleMemoryCleanup();
     const radialOpenStartedAt = Date.now();
     /** Wayland: the only cursor source is the helper's tracked position. */
-    if (isWaylandNative) {
+    if (isWaylandNative && (radialOpensAtCursor || radialFollowsCursorMonitor)) {
       const p = await queryWaylandCursor();
       if (p) waylandCursorPoint = p;
     }
@@ -2315,11 +2315,7 @@ let radialFollowsCursorMonitor = false;
  * lets the value seeded from disk at boot survive a renderer that does not send it.
  */
 function applyRadialMonitorSetting(value) {
-  /**
-   * Wayland: "follow pointer" needs the global cursor position, which Wayland never gives an app
-   * — the choice is kept in settings but behaves like "main screen" until a cursor source exists.
-   */
-  if (value === "cursor") radialFollowsCursorMonitor = !isWaylandNative;
+  if (value === "cursor") radialFollowsCursorMonitor = true;
   else if (value === "primary") radialFollowsCursorMonitor = false;
 }
 /**
@@ -2449,16 +2445,21 @@ function radialTargetDisplay(anchorScreenPoint) {
       Number.isFinite(anchorScreenPoint.x) &&
       Number.isFinite(anchorScreenPoint.y)
         ? anchorScreenPoint
-        : screen.getCursorScreenPoint();
-    return screen.getDisplayNearestPoint(point);
+        : currentCursorPoint();
+    return point ? screen.getDisplayNearestPoint(point) : screen.getPrimaryDisplay();
   } catch (e) {
     /** A display list that will not be read is not a reason to refuse to open. */
     return screen.getPrimaryDisplay();
   }
 }
 
-/** The live pointer, or null when Windows will not say — every caller has a centre to fall back to. */
+/** The live pointer, or null when the platform cannot report it — every caller has a centre to fall back to. */
 function currentCursorPoint() {
+  if (isWaylandNative) {
+    return Number.isFinite(waylandCursorPoint?.x) && Number.isFinite(waylandCursorPoint?.y)
+      ? { ...waylandCursorPoint }
+      : null;
+  }
   try {
     const point = screen.getCursorScreenPoint();
     if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) {
@@ -2922,6 +2923,7 @@ let waylandCursorPoint = null;
 let waylandCursorWaiters = null;
 
 /**
+ * shortcut: raw motion drifts from compositor coordinates; replace when a trusted Wayland cursor API is available.
  * Ask the helper for its tracked cursor position. Acceleration drift makes this approximate —
  * it is used for monitor choice and coarse placement, then the renderer's real motion takes over.
  */
@@ -2929,22 +2931,23 @@ function queryWaylandCursor() {
   if (!isWaylandNative || !radialMouseBlocker || !radialMouseBlockerReady || !radialMouseBlocker.stdin?.writable) {
     return Promise.resolve(waylandCursorPoint);
   }
-  if (waylandCursorPoint) return Promise.resolve(waylandCursorPoint);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      waylandCursorWaiters = null;
-      resolve(waylandCursorPoint);
-    }, 150);
-    timer.unref?.();
-    waylandCursorWaiters = { resolve };
-    try {
-      radialMouseBlocker.stdin.write("CURSORQ\n");
-    } catch (e) {
-      clearTimeout(timer);
-      waylandCursorWaiters = null;
-      resolve(waylandCursorPoint);
-    }
-  });
+  if (waylandCursorWaiters) return waylandCursorWaiters.promise;
+  let resolveQuery;
+  const promise = new Promise((resolve) => { resolveQuery = resolve; });
+  const finish = (point) => {
+    clearTimeout(timer);
+    waylandCursorWaiters = null;
+    resolveQuery(point);
+  };
+  const timer = setTimeout(() => finish(waylandCursorPoint), 150);
+  timer.unref?.();
+  waylandCursorWaiters = { promise, resolve: finish };
+  try {
+    radialMouseBlocker.stdin.write("CURSORQ\n");
+  } catch (e) {
+    finish(waylandCursorPoint);
+  }
+  return promise;
 }
 
 /**
@@ -3305,7 +3308,8 @@ function radialModeBounds(displayBounds, point) {
  */
 function radialOpenBounds(display, point) {
   const displayBounds = display.bounds;
-  if (!radialFullBleed) return radialModeBounds(displayBounds, point);
+  // Wayland controls window placement; draw cursor-relative wheels inside a monitor-sized surface.
+  if (!radialFullBleed && !(isWaylandNative && radialOpensAtCursor)) return radialModeBounds(displayBounds, point);
   /** A display Electron described oddly is still a display: the monitor rect is the last resort. */
   return fullBleedBounds(displayBounds, display.workArea) || {
     x: Math.round(displayBounds.x),

@@ -1,12 +1,13 @@
 # Component Inventory
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-11
 
 ## src/components/
 
 - `RadialMenu.tsx` — the wheel: slices, aiming (`resolveAimAtPoint`), hub, dwell engine, workspace switching
 - `RadialHud.tsx` — weather/battery/clock HUD (orphaned, TODO §2.3)
-- `PrecisionSettings.tsx` — settings panel (lazy chunk); Linux trigger selection offers Wheel / Mouse 4 / Mouse 5; Windows retains the recorder
+- `SoundTryWheel.tsx` — interactive sound practice wheel, keyboard and pointer input; shares voices/highlight rules with RadialMenu
+- `PrecisionSettings.tsx` — optional Sound section, clickable rows and stable scrollbar space; settings panel (lazy chunk); Linux trigger selection offers Wheel / Mouse 4 / Mouse 5; Windows retains the recorder
 - `FirstRun.tsx` — onboarding
 - `IconPicker.tsx` — lucide icon + custom icon picker (lazy, full icon set chunk)
 - `installedApps.tsx` — installed-app scanner UI (lazy)

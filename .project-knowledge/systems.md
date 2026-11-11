@@ -1,6 +1,6 @@
 # Systems
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-11
 
 | System | Status | Details |
 |--------|--------|---------|
@@ -42,3 +42,11 @@ The renderer can send `show-window` before the main window is assigned (creation
 ## User-corrected startup behavior (2026-11-10)
 
 `isSettingsOpen` starts false for both manual and login launches. Duplicate instances do not open or focus Settings. Tray Open Settings and the existing explicit Settings entry points still reveal the panel, using the guarded show-window handler. First-install onboarding retains its existing behavior. Earlier notes treating a quiet manual launch as a bug reflect the assistant's mistaken assumption, not the requested behavior.
+
+## Wayland follow-pointer (experimental, 2026-11-11)
+
+Pointer targeting is selectable and uses renderer hit testing; the former limitation label was misleading. Monitor/placement follow now uses fresh helper `CURSORQ` readings, shares concurrent queries and clears the 150 ms fallback timer on reply. `currentCursorPoint` and display selection consume those readings. Cursor placement draws inside a monitor-sized surface because Wayland controls top-level positioning. Raw relative motion drifts from compositor coordinates; scaling, monitor selection and actual positioning require desktop acceptance. No cursor-warp or input-calibration changes. Primary/center placement skips the cursor query.
+
+## Wheel audio
+
+`src/utils/radialSound.ts` synthesizes ten optional Web Audio voices, with shared volume/validation and opening/hover rules. RadialMenu, shortcut docks and Settings practice wheel use it; audio suspends after idle. No assets, dependencies or network calls. Master sound is off by default.

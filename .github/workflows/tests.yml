@@ -42,7 +42,7 @@ jobs:
                    fullscreen-bounds foreground-snapshot launch-result launch-failure \
                    file-shortcut persistence-normalize icon-map start-app-launch \
                    drop-shortcut mouse-trigger workspace-key number-launch \
-                   radial-sectors targeting-mode window-split workspace-file back-key; do
+                   radial-sectors targeting-mode radial-sound wayland-pointer window-split workspace-file back-key; do
             node "scripts/$t-smoke.mjs"
           done
           node --test backend/win32-launch.test.cjs backend/game-detection.test.cjs

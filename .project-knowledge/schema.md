@@ -1,6 +1,6 @@
 # Schema (Persistence)
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-11
 > All paths under Electron `userData`. Source of truth: `backend/electron-main.js`, `backend/persistence-normalize.cjs`, `backend/icon-store.cjs`, `src/persistenceMirror.ts`.
 
 ## Files in userData
@@ -30,3 +30,7 @@ Write path: `src/persistenceMirror.ts` — three keys or none; on failure clear 
 ## VS Code MRU (read-only, external)
 
 `sql.js` reads `<IDE globalStorage>/state.vscdb`, key `history.recentlyOpenedPathsList`; WASM loaded from asar.unpacked fallback. `file:///` URIs converted to Windows paths (Linux port: POSIX paths, `~/.config/<IDE>`).
+
+## Optional wheel sound settings
+
+`UIConfig` adds `radialSounds` (false/absent = silent), `radialOpenSound` and `radialHoverSound` (true when absent), `radialOpenSoundId` (`sub-tick` fallback), `radialHoverSoundId` (`thump` fallback), and `radialSoundVolume` (0–100 integer, default 100). Unknown sound IDs fall back; volume rejects non-finite/non-number values and clamps. Existing profiles stay silent; no migration or saved targeting changes.

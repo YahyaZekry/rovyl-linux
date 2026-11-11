@@ -347,6 +347,13 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
   showLabels: true,
   alwaysShowAppLabels: false,
   showWorkspacePill: true,
+  /** Optional feedback; existing installs stay silent until enabled. */
+  radialSounds: false,
+  radialOpenSound: true,
+  radialOpenSoundId: 'sub-tick',
+  radialHoverSound: true,
+  radialHoverSoundId: 'thump',
+  radialSoundVolume: 100,
   showBattery: false,
   showWeather: false,
   clockPosition: "top-center",

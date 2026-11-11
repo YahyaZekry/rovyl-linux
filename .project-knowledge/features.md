@@ -1,8 +1,12 @@
 # Features & Workflows
 
-> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-10
+> Part of Rovyl/.project-knowledge/ | Last updated: 2026-11-11
 
 ## Features
+
+- **Settings polish** — stable scrollbar space and clickable toggle/editor rows; controls stop propagation so a switch click toggles once.
+- **Optional sounds** — Settings → Sound: opening/hover sound choices, preview wheel and 0–100% volume. Off by default, including existing profiles.
+- **Wayland targeting** — Appearance → Wheel → Targeting → Pointer is selectable. Position → Follow pointer / At pointer now use helper estimates, explicitly approximate; compositor placement and drift need desktop testing.
 
 - **Hold-to-open wheel** — hold trigger (MMB/side button/global hotkey), wheel blooms centre-screen; click-vs-hold discrimination passes short presses through as normal clicks (docs/ARCHITECTURE.md "Mouse trigger")
 - **Workspaces** — separate wheels, switch with number keys / scroll on hub

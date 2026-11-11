@@ -33,6 +33,7 @@ import {
   Monitor,
   Mouse,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -48,6 +49,7 @@ import {
   TerminalSquare,
   Trash2,
   Undo2,
+  Volume2,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -83,6 +85,16 @@ import { radialCrowding } from '../utils/workspaceRadial';
 import { startMenuAppIdToLaunchCommand } from '../utils/windowsLaunchCommand';
 import { openExternalSiteUrl } from '../utils/openExternalSiteUrl';
 import {
+  RADIAL_SOUNDS,
+  normalizeRadialSound,
+  normalizeRadialVolume,
+  previewRadialSound,
+  resolveRadialSounds,
+  setRadialSoundVolume,
+  type RadialSoundId,
+} from '../utils/radialSound';
+import { SoundTryWheel } from './SoundTryWheel';
+import {
   dropEntriesFrom,
   guessPathKind,
   isNonWebScheme,
@@ -90,7 +102,7 @@ import {
   type DropPayload,
   type InspectedDropPath,
 } from '../utils/droppedShortcut';
-import { WheelPreview, MENU_RADIUS_RANGE } from './WheelPreview';
+import { WheelPreview, MENU_RADIUS_RANGE, PLACEHOLDERS } from './WheelPreview';
 import { DockShortcutsManager } from './DockShortcuts';
 import { DockPositionPicker } from './DockPositionPicker';
 import { WorkspaceFileEditor, type WorkspaceFileEditorHandle } from './WorkspaceFileEditor';
@@ -153,7 +165,7 @@ interface PrecisionSettingsProps {
   isPage?: boolean;
 }
 
-export type SectionId = 'general' | 'trigger' | 'appearance' | 'spaces' | 'advanced';
+export type SectionId = 'general' | 'trigger' | 'sound' | 'appearance' | 'spaces' | 'advanced';
 
 /**
  * The navigation that has to outlive the tree: open section and sidebar.
@@ -199,7 +211,7 @@ interface SettingItem {
   group: string;
   title: string;
   description?: string;
-  kind: 'bool' | 'range' | 'segmented' | 'select' | 'dockPosition' | 'open' | 'action' | 'color' | 'mouseButton';
+  kind: 'bool' | 'range' | 'segmented' | 'select' | 'dockPosition' | 'open' | 'action' | 'color' | 'mouseButton' | 'widget';
   enabled?: boolean;
   value?: string;
   min?: number;
@@ -213,6 +225,11 @@ interface SettingItem {
    */
   choices?: Array<{ value: string; label: string; hint?: string; help?: string }>;
   current?: string;
+  /**
+   * `widget` only: something to use rather than set — the practice wheel — drawn full width under
+   * the row's copy, the way the dock picker is.
+   */
+  widget?: React.ReactNode;
   /** `dockPosition` only: the other dock's region, drawn faint so a shared corner is a choice. */
   occupied?: { position: DockPosition; label: string };
   /**
@@ -226,6 +243,16 @@ interface SettingItem {
   keywords?: string;
   onToggle?: () => void;
   onChange?: (value: number | string) => void;
+  /**
+   * `range` only: the slider was let go, or stepped by a key — the native `change`, where
+   * `onChange` is every tick of a drag. For a result worth a sound, like the Volume slider's note.
+   */
+  onCommit?: (value: number) => void;
+  /**
+   * `select` only: puts a play button on every option, for lists whose choices are heard rather
+   * than read. Pressing it previews that option without choosing it.
+   */
+  onPreview?: (value: string) => void;
   onOpen?: () => void;
   onRun?: () => void;
   actionLabel?: string;
@@ -275,6 +302,7 @@ const CALIBRATION_SLOW_PRESSES = 2;
 const SECTIONS: Array<{ id: SectionId; label: string; caption: string; icon: LucideIcon }> = [
   { id: 'spaces', label: 'Workspaces', caption: 'Contexts and their shortcuts.', icon: SquareStack },
   { id: 'trigger', label: 'Activation', caption: 'How and where the wheel appears.', icon: Mouse },
+  { id: 'sound', label: 'Sound', caption: 'Notes for opening and moving around the wheel.', icon: Volume2 },
   { id: 'advanced', label: 'Advanced', caption: 'Performance, protection, and data.', icon: Shield },
   { id: 'appearance', label: 'Appearance', caption: 'Shape, presence, and theme.', icon: Palette },
   { id: 'general', label: 'General', caption: 'Core Rovyl behavior.', icon: Settings },
@@ -292,9 +320,11 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   discoveryPhase = 'idle',
 }) => {
   const { t, dir } = useTranslation(config.language);
+  /** This window's notes — the play buttons and the practice wheel — at the Volume setting. */
+  useEffect(() => { setRadialSoundVolume(config.radialSoundVolume); }, [config.radialSoundVolume]);
 
   const isLinux = navigator.userAgent.includes('Linux');
-  /** Follow pointer needs the global cursor position — Wayland doesn't expose one. */
+  /** Wayland uses approximate helper coordinates for follow-pointer placement. */
   const [waylandLimited, setWaylandLimited] = React.useState(false);
   /**
    * Middle-click calibration, two-sided: 3 fast presses learn "still a tab close", 2 slower
@@ -354,6 +384,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   const sectionsList = useMemo(() => [
     { id: 'spaces' as const, label: t('workspaces'), caption: t('workspacesDesc'), icon: SquareStack },
     { id: 'trigger' as const, label: t('trigger'), caption: t('triggerDesc'), icon: Mouse },
+    { id: 'sound' as const, label: t('sound'), caption: t('soundDesc'), icon: Volume2 },
     { id: 'advanced' as const, label: t('advanced'), caption: t('advancedDesc'), icon: Shield },
     { id: 'appearance' as const, label: t('appearance'), caption: t('appearanceDesc'), icon: Palette },
     { id: 'general' as const, label: t('general'), caption: t('generalDesc'), icon: Settings },
@@ -938,6 +969,21 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
     const triggerAllowsHold = mouseTriggerAllowsHold(config.mouseTriggerButton ?? DEFAULT_MOUSE_TRIGGER);
     const numberLaunchOn = config.radialNumberLaunch === true;
     const backKey = normalizeBackKey(config.radialBackKey);
+    const soundsOn = config.radialSounds === true;
+    const openSoundOn = config.radialOpenSound !== false;
+    const hoverSoundOn = config.radialHoverSound !== false;
+    const openSoundId = normalizeRadialSound(config.radialOpenSoundId, 'sub-tick');
+    const hoverSoundId = normalizeRadialSound(config.radialHoverSoundId, 'thump');
+    const soundChoices = RADIAL_SOUNDS.map((sound) => ({ value: sound.id, label: sound.name }));
+    const soundName = (id: RadialSoundId) => RADIAL_SOUNDS.find((sound) => sound.id === id)?.name ?? id;
+    const sounds = resolveRadialSounds(config);
+    const soundVolume = normalizeRadialVolume(config.radialSoundVolume);
+    /** What the practice wheel says it does, which depends on which of the two notes are on. */
+    const tryDescription = sounds.open && sounds.hover
+      ? `Move around the wheel: items play ${soundName(sounds.hover)}, and aiming back at the center plays ${soundName(sounds.open)}. Click the wheel to open it again.`
+      : sounds.hover
+        ? `Move around the wheel to hear ${soundName(sounds.hover)} on every item.`
+        : `Aim out and back at the center, or click the wheel to open it again, to hear ${soundName(openSoundId)}.`;
 
     /**
      * Turning off the last trigger would leave no way in, so the other one comes on in the same
@@ -1176,6 +1222,108 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           : []),
 
       ],
+      /**
+       * One unnamed group, as in General: under a section already called Sound, a "Sound" heading
+       * labels nothing.
+       */
+      sound: [
+        /**
+         * The master switch, then one switch per moment with its own pick beneath it. Withdrawn
+         * rather than disabled while off, like the docks' rows: a sound picker for a sound that
+         * will never play is a control that does nothing.
+         */
+        {
+          key: 'sounds', configKey: 'radialSounds', group: '', title: 'Sound effects',
+          description: 'Short bass notes as the wheel opens and as you move between items.',
+          keywords: 'sound audio click tick bass thump feedback haptic noise mute effects',
+          kind: 'bool', enabled: soundsOn,
+          onToggle: () => update('radialSounds', !soundsOn),
+        },
+        ...(soundsOn ? ([
+          /**
+           * One level for both notes, straight under the switch it refines. Only while one of
+           * them is on: a volume for nothing is a control that does nothing. Letting go plays the
+           * hover note, the one heard most, at the new level.
+           */
+          ...(openSoundOn || hoverSoundOn ? ([{
+            ...range('soundVolume', '', 'Volume',
+              'How loud both sounds play. System volume still applies on top.',
+              soundVolume, 0, 100,
+              (value) => {
+                setRadialSoundVolume(value);
+                update('radialSoundVolume', value);
+              },
+              (value) => `${Math.round(value)}%`, 1, 'radialSoundVolume'),
+            keywords: 'volume loud quiet level louder softer sound effects',
+            onCommit: () => previewRadialSound(sounds.hover ?? sounds.open ?? hoverSoundId),
+          }] as SettingItem[]) : []),
+          {
+            key: 'openSound', configKey: 'radialOpenSound', group: '', title: 'When the wheel opens',
+            description: 'One note as the wheel blooms open, and again when you aim back at the center.',
+            keywords: 'open launch launcher appear start sound',
+            kind: 'bool', enabled: openSoundOn,
+            /** Turning it on plays the note once, so the switch answers with the thing it switched on. */
+            onToggle: () => {
+              update('radialOpenSound', !openSoundOn);
+              if (!openSoundOn) previewRadialSound(openSoundId);
+            },
+          },
+          ...(openSoundOn ? ([{
+            key: 'openSoundId', configKey: 'radialOpenSoundId', group: '', title: 'Opening sound',
+            description: 'Press play beside a name to hear it before choosing.',
+            kind: 'select', current: openSoundId, choices: soundChoices,
+            onPreview: (value: string) => previewRadialSound(value as RadialSoundId),
+            onChange: (value: number | string) => {
+              update('radialOpenSoundId', value as RadialSoundId);
+              previewRadialSound(value as RadialSoundId);
+            },
+          }] as SettingItem[]) : []),
+          {
+            key: 'hoverSound', configKey: 'radialHoverSound', group: '', title: 'When moving between items',
+            description: 'A note each time the highlight moves to a different item.',
+            keywords: 'hover highlight select item move aim sound',
+            kind: 'bool', enabled: hoverSoundOn,
+            onToggle: () => {
+              update('radialHoverSound', !hoverSoundOn);
+              if (!hoverSoundOn) previewRadialSound(hoverSoundId);
+            },
+          },
+          ...(hoverSoundOn ? ([{
+            key: 'hoverSoundId', configKey: 'radialHoverSoundId', group: '', title: 'Hover sound',
+            description: 'Press play beside a name to hear it before choosing.',
+            kind: 'select', current: hoverSoundId, choices: soundChoices,
+            onPreview: (value: string) => previewRadialSound(value as RadialSoundId),
+            onChange: (value: number | string) => {
+              update('radialHoverSoundId', value as RadialSoundId);
+              previewRadialSound(value as RadialSoundId);
+            },
+          }] as SettingItem[]) : []),
+          /**
+           * Last, under the picks it plays: choosing a sound and then feeling it at the speed a
+           * sweep across the wheel produces are one task. Only while there is a note to hear.
+           */
+          ...(openSoundOn || hoverSoundOn ? ([{
+            key: 'soundTry', group: '', title: 'Try it',
+            description: tryDescription,
+            keywords: 'try test practice preview listen hear demo wheel',
+            kind: 'widget',
+            widget: (
+              <SoundTryWheel
+                apps={previewApps.length ? previewApps : PLACEHOLDERS}
+                sounds={sounds}
+                hoverColor={config.radialHoverColor ?? '#FFFFFF'}
+                targeting={
+                  config.radialSelectionMode === 'cursor' && config.radialInstantActivate !== 'dwell'
+                    ? 'cursor'
+                    : 'area'
+                }
+                labelledBy="soundTry-label"
+                describedBy="soundTry-desc"
+              />
+            ),
+          }] as SettingItem[]) : []),
+        ] as SettingItem[]) : []),
+      ],
       appearance: [
         {
           key: 'theme', configKey: 'appearanceTheme', group: 'Theme', title: 'Rovyl surfaces',
@@ -1224,9 +1372,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            */
           choices: [
             { value: 'area', label: 'Area' },
-            /** Wayland cannot place a window under the pointer (no global cursor query), so
-             * pointer targeting is clamped to the main screen there — the label says so. */
-            { value: 'cursor', label: waylandLimited ? 'Pointer (limited by Wayland)' : 'Pointer' },
+            { value: 'cursor', label: 'Pointer' },
           ],
           current: config.radialSelectionMode === 'cursor' ? 'cursor' : 'area',
           onChange: (value) => update('radialSelectionMode', value as UIConfig['radialSelectionMode']),
@@ -1274,7 +1420,9 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            * to launch will be sitting on.
            */
           description:
-            config.radialPlacement === 'cursor'
+            waylandLimited && (config.radialPlacement === 'cursor' || config.radialMonitor === 'cursor')
+              ? 'Experimental on Wayland: uses an estimated pointer position. It can drift, and the compositor may choose a different monitor.'
+              : config.radialPlacement === 'cursor'
               ? 'Appearance opens the wheel under the pointer, so it is already on the screen the pointer is on — this choice has nothing left to decide.'
               : config.radialMonitor === 'cursor'
                 ? 'The wheel opens on the screen the pointer is already on, so what you launch lands where you are working.'
@@ -1282,7 +1430,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           kind: 'segmented',
           choices: [
             { value: 'primary', label: 'Main screen' },
-            { value: 'cursor', label: waylandLimited ? 'Follow pointer (limited by Wayland)' : 'Follow pointer' },
+            { value: 'cursor', label: waylandLimited ? 'Follow pointer (approximate)' : 'Follow pointer' },
           ],
           current: config.radialMonitor === 'cursor' ? 'cursor' : 'primary',
           onChange: (value) => update('radialMonitor', value as UIConfig['radialMonitor']),
@@ -1300,12 +1448,14 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            */
           description:
             config.radialPlacement === 'cursor'
-              ? 'The wheel blooms under the pointer, so nothing is further away than the gesture that opened it. Near an edge it steps inward just enough to keep every target on screen.'
+              ? waylandLimited
+                ? 'Experimental on Wayland: opens near the estimated pointer position. The estimate can drift; switch to Screen center if it feels misplaced.'
+                : 'The wheel blooms under the pointer, so nothing is further away than the gesture that opened it. Near an edge it steps inward just enough to keep every target on screen.'
               : 'The wheel always blooms at the middle of the screen, wherever the pointer happens to be.',
           kind: 'segmented',
           choices: [
             { value: 'center', label: 'Screen center' },
-            { value: 'cursor', label: 'At pointer' },
+            { value: 'cursor', label: waylandLimited ? 'At pointer (approximate)' : 'At pointer' },
           ],
           current: config.radialPlacement === 'cursor' ? 'cursor' : 'center',
           keywords: 'mouse cursor location position place spawn appear under pointer center centre',
@@ -1689,7 +1839,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
       ],
     };
-  }, [config, gameMode, statusDock, shortcutDock, theme, apps, update, setConfig, updateRow, canUpdate, onReset, deleteWorkspace, reorderWorkspaces]);
+  }, [config, waylandLimited, gameMode, statusDock, shortcutDock, theme, apps, previewApps, update, setConfig, updateRow, canUpdate, onReset, deleteWorkspace, reorderWorkspaces]);
 
   const trimmedQuery = query.trim().toLowerCase();
   const activeMeta = sectionsList.find((section) => section.id === sectionId) || SECTIONS[0];
@@ -2073,6 +2223,35 @@ function SettingRow({
     return () => window.clearTimeout(timer);
   }, [confirming]);
 
+  /**
+   * WHAT THE PRESS LANDS ON
+   *
+   * The row, not the control sitting in it. A switch is 36x20 at the right edge of a row that is
+   * the width of the canvas, so hitting it is the one precise movement this panel used to ask for
+   * — while the words beside it, which are the part being read, did nothing. The press is taken
+   * by the row and `.zs-row-control` stops the bubble, so a hit on the switch itself still counts
+   * once and not twice.
+   *
+   * Only `bool` and `open` join in: they are the two kinds whose row has a single unambiguous
+   * action. A select, a slider or a segmented control has no "the" action to give the copy.
+   */
+  const onRowPress = item.kind === 'open'
+    ? item.onOpen
+    : item.kind === 'bool'
+      ? item.onToggle
+      : undefined;
+  /** React's `onChange` on a slider is the `input` event; `onCommit` wants the native `change`. */
+  const sliderRef = useRef<HTMLInputElement>(null);
+  const onCommitRef = useRef(item.onCommit);
+  onCommitRef.current = item.onCommit;
+  useEffect(() => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    const commit = () => onCommitRef.current?.(Number(slider.value));
+    slider.addEventListener('change', commit);
+    return () => slider.removeEventListener('change', commit);
+  }, []);
+
   const dragProps = reorderable
     ? {
         draggable: armed,
@@ -2108,10 +2287,11 @@ function SettingRow({
 
   return (
     <div
-      className={`zs-row${item.kind === 'range' ? ' is-slider' : ''}${item.kind === 'dockPosition' ? ' is-picker' : ''}${item.kind === 'open' ? ' is-openable' : ''}`
+      className={`zs-row${item.kind === 'range' ? ' is-slider' : ''}${(item.kind === 'dockPosition' || item.kind === 'widget') ? ' is-picker' : ''}${item.kind === 'open' ? ' is-openable' : ''}`
+        + `${onRowPress ? ' is-pressable' : ''}`
         + `${reorderable ? ' is-reorderable' : ''}${isDragging ? ' is-dragging' : ''}`
         + `${dropEdge === 'above' ? ' is-drop-above' : ''}${dropEdge === 'below' ? ' is-drop-below' : ''}`}
-      onClick={item.kind === 'open' ? item.onOpen : undefined}
+      onClick={onRowPress}
       {...dragProps}
     >
       {reorderable && (
@@ -2261,6 +2441,8 @@ function SettingRow({
         )}
       </AnimatePresence>
 
+      {item.kind === 'widget' && <div className="zs-row-widget">{item.widget}</div>}
+
       {item.kind === 'dockPosition' && (
         <DockPositionPicker
           value={item.current as DockPosition}
@@ -2275,6 +2457,7 @@ function SettingRow({
         <div className="zs-slider">
           <span className="zs-slider-bounds">{item.format?.(item.min ?? 0)}</span>
           <input
+            ref={sliderRef}
             type="range"
             min={item.min}
             max={item.max}
@@ -2612,6 +2795,13 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
    * make this an effect that runs every time anything in the panel changes.
    */
   const activeHelp = choices[activeIndex]?.help;
+  /** Choices that are heard — sounds — play as the arrows land on them, the keyboard's play button. */
+  const activeValue = choices[activeIndex]?.value;
+  useEffect(() => {
+    if (isOpen && byKeyboard && activeValue !== undefined) item.onPreview?.(activeValue);
+    // `item` is rebuilt every render; only a move of the highlight should play anything.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, byKeyboard, activeValue]);
   useEffect(() => {
     if (!isOpen || !byKeyboard) return;
     setHelpFor(activeHelp ? activeIndex : null);
@@ -2801,6 +2991,25 @@ function SelectSettingControl({ item, describedBy }: { item: SettingItem; descri
                 }}
                 onClick={() => commit(index)}
               >
+                {item.onPreview && (
+                  /*
+                    A span for the same reason as the help mark below: nothing focusable may live
+                    inside an option. The keyboard path is the highlight itself, which previews as
+                    the arrows move it.
+                  */
+                  <span
+                    className="zs-select-play"
+                    role="presentation"
+                    aria-hidden="true"
+                    title={`Play ${choice.label}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      item.onPreview?.(choice.value);
+                    }}
+                  >
+                    <Play size={11} strokeWidth={2.2} />
+                  </span>
+                )}
                 <b>{choice.label}</b>
                 {choice.hint && choice.hint !== choice.label && <small>{choice.hint}</small>}
                 {choice.help && (
@@ -5579,7 +5788,18 @@ function WorkspaceManager({
                           <div className="zs-ide-options-head">
                             <div><b>IDE integration</b><small>Recent projects and automated terminal commands.</small></div>
                           </div>
-                          <div className="zs-ide-toggle-row">
+                          {/*
+                            Pressable rows, like every `.zs-row` in the panel: the copy is what is
+                            being read, so it is what takes the press. The switch stops the bubble
+                            so a hit on the switch itself is one toggle and not two, and the second
+                            row only takes a press while it has one to give — its switch is
+                            disabled without recents, and a row that toggled a disabled switch
+                            would be a way around it.
+                          */}
+                          <div
+                            className="zs-ide-toggle-row is-pressable"
+                            onClick={() => updateItem(index, { hasRecents: !item.hasRecents })}
+                          >
                             <div><b id={`ide-recents-${item.id}`}>Show recent folders</b><small>Open the IDE as a submenu containing its recent projects.</small></div>
                             <button
                               type="button"
@@ -5587,10 +5807,18 @@ function WorkspaceManager({
                               aria-checked={Boolean(item.hasRecents)}
                               aria-labelledby={`ide-recents-${item.id}`}
                               className="zs-switch"
-                              onClick={() => updateItem(index, { hasRecents: !item.hasRecents })}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                updateItem(index, { hasRecents: !item.hasRecents });
+                              }}
                             ><i /></button>
                           </div>
-                          <div className="zs-ide-toggle-row">
+                          <div
+                            className={`zs-ide-toggle-row${item.hasRecents ? ' is-pressable' : ''}`}
+                            onClick={item.hasRecents
+                              ? () => updateItem(index, { openTerminalForRecents: !item.openTerminalForRecents })
+                              : undefined}
+                          >
                             <div><b id={`ide-terminal-${item.id}`}>Open terminal for recent folders</b><small>Starts a terminal in the selected project directory.</small></div>
                             <button
                               type="button"
@@ -5599,7 +5827,10 @@ function WorkspaceManager({
                               aria-labelledby={`ide-terminal-${item.id}`}
                               className="zs-switch"
                               disabled={!item.hasRecents}
-                              onClick={() => updateItem(index, { openTerminalForRecents: !item.openTerminalForRecents })}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                updateItem(index, { openTerminalForRecents: !item.openTerminalForRecents });
+                              }}
                             ><i /></button>
                           </div>
                           <div className="zs-ide-commands">
