@@ -15,15 +15,17 @@
  * gesture hands back (the C# SendInput + dwExtraInfo signature trick becomes a flag: the only
  * synthetic events that can reach us are the ones we just injected).
  *
- * Everything needs only DISPLAY access — no evdev, no uinput, no special permissions.
- * Wayland (without XWayland focus) cannot support any of this; there the app falls back to
- * hotkey-only mode and this helper is never spawned.
+ * X11 modes use DISPLAY; native Wayland gestures use evdev/uinput device access.
+ * cursor-query reads KDE KWin compositor coordinates over the session bus without input access.
  */
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/XTest.h>
+#include <gio/gio.h>
+#include <glib/gstdio.h>
+#include <math.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -1392,8 +1394,121 @@ static void run_mouse_blocker_evdev(const char *name_filter) {
 
 /* ---------------------------------------------------------------- entry */
 
+
+/* One-shot compositor query: raw evdev deltas cannot reproduce Wayland acceleration or scaling. */
+struct cursor_query {
+  GMainLoop *loop;
+  const char *owner;
+  double x, y;
+  int received;
+};
+
+static void cursor_position(GDBusConnection *bus, const gchar *sender, const gchar *path,
+                            const gchar *interface, const gchar *method, GVariant *params,
+                            GDBusMethodInvocation *invocation, gpointer data) {
+  (void)bus; (void)path; (void)interface; (void)method;
+  struct cursor_query *query = data;
+  if (g_strcmp0(sender, query->owner) != 0) {
+    g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "KWin only");
+    return;
+  }
+  const char *x, *y;
+  char *end_x, *end_y;
+  g_variant_get(params, "(&s&s)", &x, &y);
+  query->x = g_ascii_strtod(x, &end_x);
+  query->y = g_ascii_strtod(y, &end_y);
+  query->received = *x && *y && !*end_x && !*end_y && isfinite(query->x) && isfinite(query->y);
+  g_dbus_method_invocation_return_value(invocation, NULL);
+  g_main_loop_quit(query->loop);
+}
+
+static gboolean cursor_timeout(gpointer data) {
+  g_main_loop_quit(data);
+  return G_SOURCE_REMOVE;
+}
+
+static GVariant *cursor_call(GDBusConnection *bus, const char *path, const char *interface,
+                            const char *method, GVariant *params, const GVariantType *type) {
+  return g_dbus_connection_call_sync(bus, "org.kde.KWin", path, interface, method, params, type,
+                                     G_DBUS_CALL_FLAGS_NO_AUTO_START, 300, NULL, NULL);
+}
+
+static int run_cursor_query(void) {
+  int result = 1;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  if (!bus) return result;
+  GVariant *owner = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+    "org.freedesktop.DBus", "GetNameOwner", g_variant_new("(s)", "org.kde.KWin"), G_VARIANT_TYPE("(s)"),
+    G_DBUS_CALL_FLAGS_NONE, 300, NULL, NULL);
+  if (!owner) { g_object_unref(bus); return result; }
+  const char *owner_name;
+  g_variant_get(owner, "(&s)", &owner_name);
+  struct cursor_query query = { .loop = g_main_loop_new(NULL, FALSE), .owner = owner_name };
+  GDBusNodeInfo *info = g_dbus_node_info_new_for_xml(
+    "<node><interface name='org.rovyl.Cursor'><method name='Position'>"
+    "<arg type='s' direction='in'/><arg type='s' direction='in'/></method></interface></node>", NULL);
+  const GDBusInterfaceVTable vtable = { .method_call = cursor_position };
+  guint registration = g_dbus_connection_register_object(bus, "/org/rovyl/Cursor", info->interfaces[0], &vtable, &query, NULL, NULL);
+  gchar *file = NULL;
+  int fd = registration ? g_file_open_tmp("rovyl-cursor-XXXXXX.js", &file, NULL) : -1;
+  gchar *name = g_strdup_printf("rovyl-cursor-%d", getpid());
+  gboolean loaded = FALSE;
+  if (fd >= 0) {
+    close(fd);
+    gchar *script = g_strdup_printf(
+      "callDBus('%s', '/org/rovyl/Cursor', 'org.rovyl.Cursor', 'Position', String(workspace.cursorPos.x), String(workspace.cursorPos.y));",
+      g_dbus_connection_get_unique_name(bus));
+    if (g_file_set_contents(file, script, -1, NULL)) {
+      GVariant *reply = cursor_call(bus, "/Scripting", "org.kde.kwin.Scripting", "loadScript",
+        g_variant_new("(ss)", file, name), G_VARIANT_TYPE("(i)"));
+      if (reply) {
+        gint id;
+        g_variant_get(reply, "(i)", &id);
+        g_variant_unref(reply);
+        loaded = id >= 0;
+        if (loaded) {
+          gchar *path = g_strdup_printf("/Scripting/Script%d", id);
+          reply = cursor_call(bus, path, "org.kde.kwin.Script", "run", NULL, NULL);
+          g_free(path);
+          if (reply) {
+            g_variant_unref(reply);
+            if (!query.received) {
+              GSource *timeout = g_timeout_source_new(300);
+              g_source_set_callback(timeout, cursor_timeout, query.loop, NULL);
+              g_source_attach(timeout, NULL);
+              g_main_loop_run(query.loop);
+              g_source_destroy(timeout);
+              g_source_unref(timeout);
+            }
+            if (query.received) {
+              printf("CURSOR %.0f %.0f\n", query.x, query.y);
+              result = 0;
+            }
+          }
+        }
+      }
+    }
+    g_free(script);
+  }
+  if (loaded) {
+    GVariant *reply = cursor_call(bus, "/Scripting", "org.kde.kwin.Scripting", "unloadScript", g_variant_new("(s)", name), NULL);
+    if (reply) g_variant_unref(reply);
+  }
+  if (file) g_unlink(file);
+  g_free(file);
+  g_free(name);
+  if (registration) g_dbus_connection_unregister_object(bus, registration);
+  g_dbus_node_info_unref(info);
+  g_main_loop_unref(query.loop);
+  g_variant_unref(owner);
+  g_object_unref(bus);
+  return result;
+}
+
 int main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
+
+  if (argc > 1 && strcmp(argv[1], "cursor-query") == 0) return run_cursor_query();
 
   if (argc > 1 && strcmp(argv[1], "foreground-focus") == 0) {
     dpy = XOpenDisplay(NULL);
@@ -1425,6 +1540,6 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  fprintf(stderr, "Usage: rovyl-helper-linux [mouse-blocker <parentPid> | foreground-focus]\n");
+  fprintf(stderr, "Usage: rovyl-helper-linux [mouse-blocker <parentPid> | mouse-blocker-evdev <parentPid> | foreground-focus | cursor-query]\n");
   return 1;
 }

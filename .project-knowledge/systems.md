@@ -27,7 +27,7 @@
 | `FG`/`FOCUS` (hwnd) | X11 `_NET_ACTIVE_WINDOW`, `_NET_ACTIVE` message, `_NET_WM_PID`/`_NET_WM_NAME` |
 | machine GUID (registry) | `/etc/machine-id` |
 | taskbar overlay, AUMID, registry uninstall probe | no equivalent — skip on Linux |
-| Wayland | evdev/uinput helper handles gestures and passive keyboard hotkeys; requires input-device access. Cursor placement is approximate; no general native-Wayland pointer warp. |
+| Wayland | evdev/uinput helper handles gestures and passive keyboard hotkeys; requires input-device access. KDE cursor placement uses KWin compositor coordinates; other Wayland desktops fall back to center. No general native-Wayland pointer warp. |
 
 ## Upstream review (2026-11-10)
 
@@ -43,9 +43,13 @@ The renderer can send `show-window` before the main window is assigned (creation
 
 `isSettingsOpen` starts false for both manual and login launches. Duplicate instances do not open or focus Settings. Tray Open Settings and the existing explicit Settings entry points still reveal the panel, using the guarded show-window handler. First-install onboarding retains its existing behavior. Earlier notes treating a quiet manual launch as a bug reflect the assistant's mistaken assumption, not the requested behavior.
 
-## Wayland follow-pointer (experimental, 2026-11-11)
+## Wayland pointer placement (2026-11-11)
 
-Pointer targeting is selectable and uses renderer hit testing; the former limitation label was misleading. Monitor/placement follow now uses fresh helper `CURSORQ` readings, shares concurrent queries and clears the 150 ms fallback timer on reply. `currentCursorPoint` and display selection consume those readings. Cursor placement draws inside a monitor-sized surface because Wayland controls top-level positioning. Raw relative motion drifts from compositor coordinates; scaling, monitor selection and actual positioning require desktop acceptance. No cursor-warp or input-calibration changes. Primary/center placement skips the cursor query.
+Pointer targeting uses renderer hit testing. KDE placement now reads `workspace.cursorPos` through the native helper's one-shot `cursor-query` mode over GIO/session D-Bus. A temporary read-only KWin script reports coordinates back to the helper's unique bus connection, accepts only the KWin owner's response, and is unloaded/deleted afterward. Raw `CURSORQ` motion estimates are no longer consumed by main. Invalid/missing/timed-out queries clear the cached point and fall back to primary/center, rather than reusing a drifting position. Main shares in-flight queries and drops a held opening if release happened during the query. Primary/center placement skips the query.
+
+Area and dwell-direction modes request a monitor-sized input surface even with a light scrim, so mouse motion/clicks are not lost outside the compact wheel window. Existing leave/blur cancellation remains. Pointer placement also uses a monitor surface because Wayland controls top-level positioning. KDE coordinate query is verified live; actual positioning, scaling and multiple-monitor acceptance remain pending. Other Wayland desktops do not have this KWin capability.
+
+Position controls distinguish Screen (Main screen / Screen under mouse) from Wheel location (Screen center / Near mouse). The screen choice hides on single-monitor systems and whenever Near mouse already chooses its screen. [KDE API](https://develop.kde.org/docs/plasma/kwin/api/).
 
 ## Wheel audio
 

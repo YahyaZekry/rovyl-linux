@@ -2130,7 +2130,7 @@ function sendToOverlay(channel, payload) {
  * when `radialPlacement` is `cursor`. Everything downstream is derived from it: the window box
  * around it, the taskbar screen, the parked cursor, and the `clientPosition` the renderer draws at.
  */
-function showMenuAtCursor(source = "shortcut") {
+function showMenuAtCursor(source = "shortcut", canOpen) {
   void ensureOverlayWindow().then(async (win) => {
     if (!win || win.isDestroyed()) return;
     cancelIdleMemoryCleanup();
@@ -2145,6 +2145,8 @@ function showMenuAtCursor(source = "shortcut") {
      * One reading of the pointer, used for both answers. Asking twice would let the hand move
      * between them and put the wheel on a screen its own centre is not on.
      */
+    // A held gesture can end while the compositor query is in flight.
+    if (canOpen && !canOpen()) return;
     const cursorPoint = radialOpensAtCursor ? currentCursorPoint() : null;
     const targetDisplay = radialTargetDisplay(cursorPoint ?? undefined);
     const radialCenter = radialOpenCenter(targetDisplay.bounds, cursorPoint);
@@ -2783,16 +2785,6 @@ function ensureRadialMouseBlocker() {
         } catch (e) {
           diagLog(`[RadialBlocker] hotkey: ${e.message}`);
         }
-      } else if (line.startsWith("CURSOR ")) {
-        const parts = line.slice(7).trim().split(" ");
-        const px = parseInt(parts[0], 10);
-        const py = parseInt(parts[1], 10);
-        if (Number.isFinite(px) && Number.isFinite(py)) {
-          waylandCursorPoint = { x: px, y: py };
-          const waiters = waylandCursorWaiters;
-          waylandCursorWaiters = null;
-          if (waiters) waiters.resolve({ x: px, y: py });
-        }
       } else if (line === "SHORTCUT_DOWN") {
         try {
           triggerRadialShortcut();
@@ -2918,36 +2910,26 @@ function waitForMouseButtonsUp(timeoutMs = 400) {
 let waylandBlockRect = null;
 /** Last renderer-reported cursor position (screen coords); re-sent as the watchdog heartbeat. */
 let lastWheelPos = null;
-/** Last helper-reported coarse position (CURSORQ answer); the follow-pointer source on Wayland. */
+/** Last compositor-reported position; never seeded from raw motion. */
 let waylandCursorPoint = null;
 let waylandCursorWaiters = null;
 
-/**
- * shortcut: raw motion drifts from compositor coordinates; replace when a trusted Wayland cursor API is available.
- * Ask the helper for its tracked cursor position. Acceleration drift makes this approximate —
- * it is used for monitor choice and coarse placement, then the renderer's real motion takes over.
- */
+/** Read compositor coordinates; raw evdev deltas cannot account for acceleration or screen edges. */
 function queryWaylandCursor() {
-  if (!isWaylandNative || !radialMouseBlocker || !radialMouseBlockerReady || !radialMouseBlocker.stdin?.writable) {
-    return Promise.resolve(waylandCursorPoint);
-  }
-  if (waylandCursorWaiters) return waylandCursorWaiters.promise;
-  let resolveQuery;
-  const promise = new Promise((resolve) => { resolveQuery = resolve; });
-  const finish = (point) => {
-    clearTimeout(timer);
-    waylandCursorWaiters = null;
-    resolveQuery(point);
-  };
-  const timer = setTimeout(() => finish(waylandCursorPoint), 150);
-  timer.unref?.();
-  waylandCursorWaiters = { promise, resolve: finish };
-  try {
-    radialMouseBlocker.stdin.write("CURSORQ\n");
-  } catch (e) {
-    finish(waylandCursorPoint);
-  }
-  return promise;
+  if (!isWaylandNative) return Promise.resolve(null);
+  if (waylandCursorWaiters) return waylandCursorWaiters;
+  const helper = getNativeHelperExePath();
+  if (!helper) { waylandCursorPoint = null; return Promise.resolve(null); }
+  const query = new Promise((resolve) => {
+    execFile(helper, ["cursor-query"], { timeout: 2000, maxBuffer: 1024 }, (error, stdout) => {
+      const match = !error && /^CURSOR (-?\d+) (-?\d+)\s*$/.exec(stdout);
+      const point = match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+      waylandCursorPoint = point && Number.isSafeInteger(point.x) && Number.isSafeInteger(point.y) ? point : null;
+      resolve(waylandCursorPoint);
+    });
+  });
+  waylandCursorWaiters = query.finally(() => { waylandCursorWaiters = null; });
+  return waylandCursorWaiters;
 }
 
 /**
@@ -7154,7 +7136,7 @@ app.whenReady().then(async () => {
                 mmbHoldGestureId !== holdGestureId ||
                 cachedRadialFlags.mouseTriggerMode !== "hold"
               ) return;
-              showMenuAtCursor("mmb");
+              showMenuAtCursor("mmb", () => mmbIsDown && mmbHoldGestureId === holdGestureId);
               /** Button still down: without this probe the renderer gets no `mousemove` at all. */
               startMmbCursorTracking();
             }, MMB_HOLD_OPEN_DELAY_MS);
@@ -9192,7 +9174,11 @@ ipcMain.on("get-launch-flags", (event) => {
 });
 
 ipcMain.handle("get-app-version", () => app.getVersion());
-ipcMain.handle("get-platform-info", () => ({ wayland: isWaylandNative }));
+ipcMain.handle("get-platform-info", () => ({
+  wayland: isWaylandNative,
+  cursorPosition: !isWaylandNative || /kde/i.test(process.env.XDG_CURRENT_DESKTOP || ""),
+  displays: screen.getAllDisplays().length,
+}));
 
 /**
  * Distribution channel, from the point of view of WHO updates:

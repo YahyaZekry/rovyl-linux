@@ -324,8 +324,9 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   useEffect(() => { setRadialSoundVolume(config.radialSoundVolume); }, [config.radialSoundVolume]);
 
   const isLinux = navigator.userAgent.includes('Linux');
-  /** Wayland uses approximate helper coordinates for follow-pointer placement. */
+  /** KDE exposes compositor coordinates; other Wayland desktops fall back to screen center. */
   const [waylandLimited, setWaylandLimited] = React.useState(false);
+  const [hasMultipleScreens, setHasMultipleScreens] = React.useState(false);
   /**
    * Middle-click calibration, two-sided: 3 fast presses learn "still a tab close", 2 slower
    * presses learn "clearly the menu", and the threshold becomes the boundary between them.
@@ -376,7 +377,10 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
   React.useEffect(() => {
     let cancelled = false;
     void window.electron?.isWaylandNative?.().then((info) => {
-      if (!cancelled && info?.wayland) setWaylandLimited(true);
+      if (!cancelled) {
+        setWaylandLimited(Boolean(info?.wayland && !info.cursorPosition));
+        setHasMultipleScreens((info?.displays ?? 1) > 1);
+      }
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -1422,8 +1426,8 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           kind: 'bool', enabled: config.showWorkspacePill !== false,
           onToggle: () => update('showWorkspacePill', config.showWorkspacePill === false),
         },
-        ...(config.radialPlacement !== 'cursor' ? [{
-          key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Monitor',
+        ...(hasMultipleScreens && config.radialPlacement !== 'cursor' ? [{
+          key: 'radialMonitor', configKey: 'radialMonitor', group: 'Position', title: 'Screen',
           /**
            * The consequence, not the mechanism. Nobody opens this panel wanting to know which
            * `Display` object main asks for — they want to know which screen the thing they are about
@@ -1431,23 +1435,26 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
            */
           description:
             waylandLimited && config.radialMonitor === 'cursor'
-              ? 'Experimental on Wayland: uses an estimated pointer position. It can drift, and the compositor may choose a different monitor.'
+              ? 'Pointer positioning needs KDE Plasma on Wayland. Screen center is used on this desktop.'
               : config.radialMonitor === 'cursor'
                 ? 'The wheel opens on the screen the pointer is already on, so what you launch lands where you are working.'
                 : 'The wheel always opens on the main screen, wherever the pointer happens to be.',
           kind: 'segmented',
           choices: [
             { value: 'primary', label: 'Main screen' },
-            { value: 'cursor', label: waylandLimited ? 'Follow pointer (approximate)' : 'Follow pointer' },
+            { value: 'cursor', label: waylandLimited ? 'Requires KDE Plasma' : 'Screen under mouse' },
           ],
           current: config.radialMonitor === 'cursor' ? 'cursor' : 'primary',
-          onChange: (value: number | string) => update('radialMonitor', value as UIConfig['radialMonitor']),
+          onChange: (value: number | string) => {
+            if (value === 'cursor' && waylandLimited) { showToast('Pointer positioning on Wayland requires KDE Plasma.'); return; }
+            update('radialMonitor', value as UIConfig['radialMonitor']);
+          },
         }] as SettingItem[] : []),
         range('threshold', 'Position', 'Activation zone', 'Cursor distance required to confirm a target.',
           config.activationThreshold, 20, 120, (value) => update('activationThreshold', value), (value) => `${Math.round(value)} px`,
           1, 'activationThreshold'),
         {
-          key: 'radialPlacement', configKey: 'radialPlacement', group: 'Position', title: 'Wheel position',
+          key: 'radialPlacement', configKey: 'radialPlacement', group: 'Position', title: 'Wheel location',
           /**
            * Said as the consequence, because that is the whole of the choice: the same wheel, the
            * same targets, a different distance for the hand. The clamp near an edge is mentioned —
@@ -1457,17 +1464,20 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
           description:
             config.radialPlacement === 'cursor'
               ? waylandLimited
-                ? 'Experimental on Wayland: opens near the estimated pointer position. The estimate can drift; switch to Screen center if it feels misplaced.'
+                ? 'Pointer positioning needs KDE Plasma on Wayland. Screen center is used on this desktop.'
                 : 'The wheel blooms under the pointer, so nothing is further away than the gesture that opened it. Near an edge it steps inward just enough to keep every target on screen.'
               : 'The wheel always blooms at the middle of the screen, wherever the pointer happens to be.',
           kind: 'segmented',
           choices: [
             { value: 'center', label: 'Screen center' },
-            { value: 'cursor', label: waylandLimited ? 'At pointer (approximate)' : 'At pointer' },
+            { value: 'cursor', label: waylandLimited ? 'Requires KDE Plasma' : 'Near mouse' },
           ],
           current: config.radialPlacement === 'cursor' ? 'cursor' : 'center',
           keywords: 'mouse cursor location position place spawn appear under pointer center centre',
-          onChange: (value) => update('radialPlacement', value as UIConfig['radialPlacement']),
+          onChange: (value) => {
+            if (value === 'cursor' && waylandLimited) { showToast('Pointer positioning on Wayland requires KDE Plasma.'); return; }
+            update('radialPlacement', value as UIConfig['radialPlacement']);
+          },
         },
         range('dockPanelClearance', 'Position', 'Panel clearance',
           'Keeps the docks off the screen edge by this many pixels — set it to your taskbar/panel thickness so they never slide under it. Wayland does not tell apps where the panel is.',
@@ -1847,7 +1857,7 @@ export const PrecisionSettings: React.FC<PrecisionSettingsProps> = ({
         },
       ],
     };
-  }, [config, waylandLimited, gameMode, statusDock, shortcutDock, theme, apps, previewApps, update, setConfig, updateRow, canUpdate, onReset, deleteWorkspace, reorderWorkspaces]);
+  }, [config, waylandLimited, hasMultipleScreens, gameMode, statusDock, shortcutDock, theme, apps, previewApps, update, setConfig, updateRow, canUpdate, onReset, deleteWorkspace, reorderWorkspaces]);
 
   const trimmedQuery = query.trim().toLowerCase();
   const activeMeta = sectionsList.find((section) => section.id === sectionId) || SECTIONS[0];

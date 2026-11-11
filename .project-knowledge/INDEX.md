@@ -1,6 +1,6 @@
 # Rovyl — Knowledge Index
 
-> Last updated: 2026-11-11 (selected Electron settings/sound ports and experimental Wayland follow-pointer)
+> Last updated: 2026-11-11 (KDE compositor coordinates and monitor-wide Area input)
 > Status: Active
 > Stack: Electron 44.3.0 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
 > Current goal: verify quiet startup, selected settings/sound ports and experimental Wayland targeting; full upstream integration remains incomplete. AUR is live and Chaotic-AUR acceptance remains pending

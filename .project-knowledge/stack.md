@@ -46,3 +46,7 @@
 - `npm run test:mouse-trigger` — shared grammar plus Linux rejection and live-rearm protocol checks.
 - `npm run test:upstream-review` — scratch-repository report checks, including unchanged HEAD/worktree.
 - `node scripts/upstream-review.mjs` — produce the read-only upstream review after fetching `upstream/main`.
+
+## Linux helper build
+
+`npm run build` now compiles the Linux C helper from source (gcc, X11/XTest and `pkg-config --cflags --libs gio-2.0`), rather than skipping Linux and packaging a stale prebuilt binary. Debian/Ubuntu prerequisites add `libglib2.0-dev pkg-config`; runtime GIO is already part of Electron’s GTK dependency closure. CI prerequisites and strict-warning compilation use the same flags. GIO supports the one-shot KWin cursor query; gesture capture is unchanged.

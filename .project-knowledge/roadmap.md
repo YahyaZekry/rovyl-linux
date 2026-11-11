@@ -21,7 +21,7 @@ taskbar icon fix; two-sided calibration + double-click option; settings category
 
 ## Known Bugs
 
-- [ ] Desktop acceptance: Area click confirmation after the scrim fix, Pointer hit testing, approximate follow-pointer placement/monitor choice and audible feedback. Automated checks and browser Settings checks pass; raw helper motion cannot provide exact Wayland global coordinates.
+- [ ] Desktop acceptance: Area click confirmation after the scrim fix, Pointer hit testing, KDE compositor-based placement/monitor choice and audible feedback. Automated checks and browser Settings checks pass; the former raw-motion estimate was replaced by a live-verified KWin query. Other Wayland desktops fall back to center.
 
 - [ ] Chaotic-AUR acceptance remains pending: GitHub #4539 is open (`needs-triage`), while GitLab MR !3910 is closed without merge. AUR itself is already live at 1.17.0-1. *(checked: 2026-11-10)*
 

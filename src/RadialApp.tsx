@@ -215,6 +215,8 @@ export default function RadialApp() {
        * its own edge has to stop being a box: main opens the overlay over the whole monitor instead.
        */
       fullBleed:
+        // Area aiming must keep receiving motion and clicks beyond the icon-sized window.
+        config.radialSelectionMode !== 'cursor' || config.radialInstantActivate === 'dwell' ||
         radialScrimNeedsFullBleed(config.backdropOpacity) ||
         /**
          * The corner gear asks for the same thing, for the same reason: the box has no corners
@@ -244,6 +246,8 @@ export default function RadialApp() {
     config.showSettingsCorner,
     config.radialMonitor,
     config.radialPlacement,
+    config.radialSelectionMode,
+    config.radialInstantActivate,
     statusDock,
     shortcutDock,
   ]);

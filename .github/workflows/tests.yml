@@ -20,7 +20,7 @@ jobs:
         run: npm ci
 
       - name: Build prerequisites (gcc + X11 headers for the gesture helper)
-        run: sudo apt-get update && sudo apt-get install -y build-essential libx11-dev libxtst-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential libx11-dev libxtst-dev libglib2.0-dev pkg-config
 
       - name: Syntax checks (main process)
         run: |
@@ -29,7 +29,7 @@ jobs:
           node --check backend/linux-desktop.cjs
 
       - name: Native helper (strict warnings)
-        run: gcc -O2 -Wall -Wextra -o /tmp/rovyl-helper-check backend/native-helper-linux/rovyl-helper.c -lX11 -lXtst
+        run: gcc -O2 -Wall -Wextra -o /tmp/rovyl-helper-check backend/native-helper-linux/rovyl-helper.c -lX11 -lXtst $(pkg-config --cflags --libs gio-2.0)
 
       - name: Renderer + helper build (runs the handshake and bundle verifiers)
         run: npm run build

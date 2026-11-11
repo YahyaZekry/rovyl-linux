@@ -566,7 +566,7 @@ export interface ElectronAPI {
   appSupportsRecents?: (appName: string, appCommand: string) => Promise<boolean>;
   /** Real pointer position while the wheel is open (Wayland has no global cursor query). */
   wheelCursor?: (x: number | null, y: number | null) => void;
-  isWaylandNative?: () => Promise<{ wayland: boolean }>;
+  isWaylandNative?: () => Promise<{ wayland: boolean; cursorPosition?: boolean; displays?: number }>;
   /** Middle-click calibration: main measures real middle-press durations. */
   calibrationStart?: () => void;
   calibrationCancel?: () => void;

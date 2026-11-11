@@ -102,7 +102,7 @@ the way it is, and what's planned.
 
 ## Building
 
-Requires **Node 20+** and, on Linux, `build-essential libx11-dev libxtst-dev` (the C
+Requires **Node 20+** and, on Linux, `build-essential libx11-dev libxtst-dev libglib2.0-dev pkg-config` (the C
 gesture helper compiles as part of the build).
 
 ```bash

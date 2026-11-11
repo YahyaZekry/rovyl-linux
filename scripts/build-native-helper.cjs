@@ -15,6 +15,12 @@ function findCscExe() {
 
 function buildNativeHelper() {
   const projectRoot = path.join(__dirname, "..");
+  if (process.platform === "linux") {
+    const flags = execFileSync("pkg-config", ["--cflags", "--libs", "gio-2.0"], { encoding: "utf8" }).trim().split(/\s+/);
+    execFileSync("gcc", ["-O2", "-Wall", "-Wextra", "-o", path.join(projectRoot, "backend", "rovyl-helper-linux"),
+      path.join(projectRoot, "backend", "native-helper-linux", "rovyl-helper.c"), "-lX11", "-lXtst", ...flags], { stdio: "inherit" });
+    return;
+  }
   const src = path.join(projectRoot, "backend", "native-helper", "rovyl-helper.cs");
   const binDir = path.join(projectRoot, "resources", "bin");
   const out1 = path.join(binDir, "rovyl-helper.exe");

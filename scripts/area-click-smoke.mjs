@@ -73,3 +73,35 @@ result = toggle({enableKeyboardTrigger:true,enableMouseTrigger:true,middleClickO
 assert.equal(result.mouseOn, true, 'Windows keeps independent trigger and menu controls');
 assert.equal(result.next.middleClickOpensMenu, false);
 console.log('area-click-smoke: trigger settings OK (legacy flags and last-trigger fallback)');
+
+const radialText = readFileSync(new URL('../src/RadialApp.tsx', import.meta.url), 'utf8');
+const radialAst = ts.createSourceFile('RadialApp.tsx', radialText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let fullBleed;
+function findViewport(node) {
+  if (ts.isPropertyAssignment(node) && node.name.getText(radialAst) === 'fullBleed') fullBleed = node.initializer.getText(radialAst);
+  ts.forEachChild(node, findViewport);
+}
+findViewport(radialAst);
+assert.ok(fullBleed);
+const monitorSurface = config => vm.runInNewContext(fullBleed, {config,radialScrimNeedsFullBleed:()=>false,docksNeedFullBleed:()=>false,statusDock:{},shortcutDock:{}});
+assert.equal(monitorSurface({radialSelectionMode:'area'}), true, 'Area captures the whole monitor even with a light scrim');
+assert.equal(monitorSurface({radialSelectionMode:'cursor'}), false, 'Pointer can retain a compact surface');
+assert.equal(monitorSurface({radialSelectionMode:'cursor',radialInstantActivate:'dwell'}), true, 'direction dwell also covers the monitor');
+console.log('area-click-smoke: monitor-wide input surface OK');
+
+let screenChoice;
+function findScreenChoice(node) {
+  if (ts.isPropertyAssignment(node) && node.name.getText(settingsAst) === 'key' && node.initializer.getText(settingsAst) === "'radialMonitor'") {
+    let parent = node.parent;
+    while (parent && !ts.isConditionalExpression(parent)) parent = parent.parent;
+    screenChoice = parent?.condition.getText(settingsAst);
+  }
+  ts.forEachChild(node, findScreenChoice);
+}
+findScreenChoice(settingsAst);
+assert.ok(screenChoice);
+const showScreenChoice = (hasMultipleScreens, radialPlacement) => vm.runInNewContext(screenChoice, {hasMultipleScreens,config:{radialPlacement}});
+assert.equal(showScreenChoice(false,'center'), false, 'one monitor has no screen-choice control');
+assert.equal(showScreenChoice(true,'center'), true, 'multiple monitors retain screen choice');
+assert.equal(showScreenChoice(true,'cursor'), false, 'near-mouse placement already determines its screen');
+console.log('area-click-smoke: redundant screen choices hidden');
