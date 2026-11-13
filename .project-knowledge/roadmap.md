@@ -7,9 +7,9 @@
 
 Maintain the Linux Electron app independently of upstream's Windows-native rewrite.
 
-1. Verify the user-corrected quiet-start behavior: normal manual/login/duplicate launches stay in the tray, and tray Open Settings opens the panel. Corrected AppImage installed; real-desktop retest pending.
+1. User confirmed quiet startup and current desktop behavior on 2026-11-13; keep multi-monitor and scaling acceptance open.
 2. Upstream integration remains incomplete: 73 incoming commits were not merged; the workflow only reports them. Twenty-eight commits belong to the last compatible Electron-era line through 1.19. Selected settings polish and optional sounds are now ported (five Electron commits); dismissal changes were skipped at the user’s request. Keep the Windows-native rewrite out of this Linux app; no full upstream merge is claimed.
-3. Release the startup, launcher-error and supported-binding fixes after live acceptance. All Linux package builds and isolated Wayland checks passed; see release-checklist.md. Manual auto-opening was removed at the user's explicit correction on 2026-11-10; quiet-start acceptance is pending.
+3. v1.17.1 is published on GitHub and AUR; monitor Chaotic-AUR triage and test the display combinations listed below.
 4. Keep deb udev/postinst polish and Windows compatibility checks separate from this Linux release.
 
 **Recently shipped:** v1.16 upstream merge (by hand); Linux system dock with live readings
@@ -27,7 +27,7 @@ taskbar icon fix; two-sided calibration + double-click option; settings category
 - [ ] Mixed scaling across monitors: repeat the same checks on each screen.
 - [ ] Other desktop acceptance remains separate: Pointer hit testing and audible feedback. Quiet login/manual startup checks remain above. Other Wayland desktops fall back to center for cursor placement.
 
-- [ ] Chaotic-AUR acceptance remains pending: GitHub #4539 is open (`needs-triage`), while GitLab MR !3910 is closed without merge. AUR itself is already live at 1.17.0-1. *(checked: 2026-11-10)*
+- [ ] Chaotic-AUR acceptance remains pending: GitHub #4539 is open (`needs-triage`), while GitLab MR !3910 is closed without merge. AUR package source is live at 1.17.1-1 (published 2026-11-13). *(checked: 2026-11-10)*
 
 - [ ] Hotplug rescan is flaky when a device appears within ~100 ms of helper start (udev ACL lands after node creation); fine for the boot case, matters for BT reconnect — needs a retry-until-grab loop per device *(found: 2026-09-14)*
 - (found 2026-09-14) `@electron/get` extract silently produced a broken `dist/` on this machine — manual unzip + `path.txt` (`electron`, no newline) fixed; watch for it after fresh `npm install`

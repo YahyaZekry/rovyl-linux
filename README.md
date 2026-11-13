@@ -54,6 +54,8 @@ your usual scaling afterward.
 
 ## Install
 
+**AUR:** Install [`rovyl-bin`](https://aur.archlinux.org/packages/rovyl-bin) using your preferred AUR helper.
+
 **AppImage** (any distro):
 
 ```bash

@@ -1,6 +1,6 @@
 # Linux maintenance release — v1.17.1 preparation
 
-> Updated: 2026-11-13. v1.17.1 prepared for publication; check GitHub release and AUR for actual status.
+> Updated: 2026-11-13. v1.17.1 is published on GitHub and the AUR package source; Chaotic-AUR review is pending.
 
 ## Release notes
 
@@ -16,7 +16,7 @@
 
 Maintenance: upstream updates now generate a review report instead of automatically merging the Windows-native rewrite. This fork remains a Linux Electron app.
 
-## Latest code CI status (2026-11-11)
+## Previous code CI status (2026-11-11)
 
 For code commit `f90ce7a`, local build/tests/package checks passed and the user confirmed
 the fix on the current desktop. Hosted Tests, Linux builds and Container image failed
@@ -24,6 +24,15 @@ while downloading system dependencies because package servers could not be resol
 (`security.ubuntu.com` / `archive.ubuntu.com`); these runs did not reach code validation.
 Failed jobs were retried once; results remain pending. Wayland E2E was still running
 when checked. The older successful run links below do not verify this latest commit.
+
+## v1.17.1 publication (2026-11-13)
+
+- [x] User confirmed quiet startup and the current desktop behavior.
+- [x] [GitHub Tests](https://github.com/YahyaZekry/rovyl-linux/actions/runs/43450329952) and [tagged Linux builds](https://github.com/YahyaZekry/rovyl-linux/actions/runs/43451197046) passed; the release has one AppImage and four distro-specific deb files.
+- [x] [GitHub release v1.17.1](https://github.com/YahyaZekry/rovyl-linux/releases/tag/v1.17.1) published with display-test limitations in the release notes.
+- [x] [AUR publish job](https://github.com/YahyaZekry/rovyl-linux/actions/runs/43451858757) pushed commit `841d814`; the AUR PKGBUILD shows 1.17.1 and its SHA-256 matches the published AppImage. The RPC index initially still returned 1.17.0 immediately after publication.
+- [ ] [Chaotic-AUR request #4539](https://github.com/chaotic-aur/packages/issues/4539) remains open and needs triage; no acceptance is claimed.
+- Multi-monitor, fractional scaling and mixed scaling remain untested.
 
 ## Verified
 
@@ -50,8 +59,8 @@ On 2026-11-10 the user explicitly corrected the intended behavior: manual launch
 
 ## Publish after acceptance
 
-1. Bump package.json and package-lock.json together to 1.17.1 and commit the accepted release state.
-2. Tag that commit v1.17.1 and push to GitHub. The Linux builds workflow packages and attaches AppImage/deb assets to the release.
+1. For the next release, bump package.json and package-lock.json together and commit the accepted release state.
+2. Tag that commit and push to GitHub. The Linux builds workflow packages and attaches AppImage/deb assets to the release.
 3. Verify the release assets and the subsequent AUR publish run; confirm the AUR version and source checksum.
 4. GitLab contents are synchronized through the connected GitLab (Beta) account; verify matching file trees after each connector sync. Main commit IDs differ because GitLab creates its own sync commit. Terminal Git push access remains unavailable; no additional key setup is needed for connector-based updates.
 

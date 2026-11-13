@@ -122,3 +122,8 @@ Latest hosted checks for `f90ce7a` were inspected: Tests, Linux builds and Conta
 ### 2026-11-13 — Prepare v1.17.1
 
 User confirmed quiet startup and current desktop behavior and requested publication to AUR / Chaotic-AUR. Prepared version 1.17.1 and made each distribution’s deb filename unique so release artifacts do not overwrite one another. Multiple-monitor and scaling checks remain untested. Publication and AUR status must be verified from their live services.
+
+
+### 2026-11-13 — Publish v1.17.1
+
+Published GitHub release v1.17.1 after Tests and all five tagged package builds passed; uploaded one AppImage and four uniquely named distro deb files. AUR publish job succeeded and pushed `841d814`; AUR PKGBUILD 1.17.1 SHA-256 `40122ef2f0f31222844150f187b7bb4166357cd68ad292b70b463fe66ba5339d` matches the release asset. AUR RPC initially remained cached at 1.17.0. The Chaotic-AUR request #4539 is still open and needs triage; the old MR was closed unmerged. Multi-monitor and scaling acceptance remains untested.
