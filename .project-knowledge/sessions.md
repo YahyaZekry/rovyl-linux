@@ -92,3 +92,8 @@ Packaged and atomically installed with backup, then restarted cleanly. Verified 
 User enthusiastically confirmed the latest pointer-placement/Area fix works on the current KDE Wayland desktop. This is current-setup acceptance, not evidence for additional monitors or scaling. At the user’s request, README now explicitly marks multi-monitor, fractional scaling (125%/150%) and mixed-scaling checks as untested, with a short manual checklist and expected edge clamping. Corrected README’s stale cursor limitation and Linux mouse-setting labels. Updated current project knowledge and release acceptance; preserved older log entries. Documentation-only change; no application rebuild or settings changes required.
 
 Latest hosted checks for `f90ce7a` were inspected: Tests, Linux builds and Container image failed at dependency installation due to package-server DNS resolution errors, before compilation/tests. Requested one retry of failed jobs; results pending. Wayland E2E remained running when checked. Recorded this separately from the successful local checks and user-confirmed desktop behavior.
+
+
+### 2026-11-13 — Prepare v1.17.1
+
+User confirmed quiet startup and current desktop behavior and requested publication to AUR / Chaotic-AUR. Prepared version 1.17.1 and made each distribution’s deb filename unique so release artifacts do not overwrite one another. Multiple-monitor and scaling checks remain untested. Publication and AUR status must be verified from their live services.

@@ -1,8 +1,12 @@
-# Linux maintenance release — proposed v1.17.1
+# Linux maintenance release — v1.17.1 preparation
 
-> Updated: 2026-11-11. Not tagged or published; package version remains 1.17.0 until acceptance.
+> Updated: 2026-11-13. v1.17.1 prepared for publication; check GitHub release and AUR for actual status.
 
 ## Release notes
+
+- Area aiming works across the monitor; KDE Wayland Near mouse placement uses compositor coordinates.
+- Settings rows are clickable, scrollbar layout stays stable, and optional wheel sounds have a volume control.
+- Multi-monitor, fractional and mixed scaling remain untested; see the README checklist.
 
 - Normal manual launches and login startup stay in the tray. Repeated launches leave the running window state unchanged.
 - Settings opens through an explicit Settings action; its reveal waits for window initialization so early requests are not lost. First-install onboarding remains unchanged.
@@ -37,7 +41,7 @@ when checked. The older successful run links below do not verify this latest com
 - [ ] Multiple monitors: screen selection, Near mouse placement, edges and Area selection on each monitor.
 - [ ] Fractional scaling (125% / 150%, where supported) and mixed scaling across monitors: placement, clipping and Area selection.
 
-- [ ] At the next real sign-in, Rovyl remains in the tray without opening Settings.
+- [x] User confirmed quiet startup on their desktop (2026-11-13).
 - [ ] Launch Rovyl manually, including while already running: no Settings window opens.
 - [ ] Choose Open Settings from the tray: Settings opens with working controls.
 - [ ] Close Settings and confirm the normal mouse/hotkey wheel still opens, launches a shortcut, and dismisses.
