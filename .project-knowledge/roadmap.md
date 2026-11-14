@@ -21,7 +21,7 @@ taskbar icon fix; two-sided calibration + double-click option; settings category
 
 ## Known Bugs
 
-- [ ] AUR `1.17.1-1` copies owner-only AppImage extraction directories into `/opt/Rovyl`, preventing ordinary users from launching it. Revision `1.17.1-2` is being prepared with world-readable/traversable package files; verify live AUR publication and installation as an unprivileged user.
+- [ ] Verify launch as an unprivileged user on the affected machine. AUR `1.17.1-1` installed owner-only folders; revision `1.17.1-2` fixes their permissions and was published in AUR commit `7a50535`. The public RPC index still returned `1.17.1-1` immediately after publication.
 
 - User confirmed the Near mouse/Area fix on the current KDE desktop on 2026-11-11. This is not acceptance of every display configuration.
 - [ ] Multiple monitors: correct monitor choice and Near mouse placement on each monitor.

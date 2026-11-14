@@ -1,6 +1,6 @@
 # Linux maintenance release — v1.17.1 preparation
 
-> Updated: 2026-11-13. v1.17.1 is published on GitHub and the AUR package source; Chaotic-AUR review is pending.
+> Updated: 2026-11-13. v1.17.1 is published on GitHub and the AUR package source; permissions-fixed AUR revision 1.17.1-2 was published on 2026-11-14; Chaotic-AUR review is pending.
 
 ## Release notes
 
@@ -32,6 +32,7 @@ when checked. The older successful run links below do not verify this latest com
 - [x] [GitHub release v1.17.1](https://github.com/YahyaZekry/rovyl-linux/releases/tag/v1.17.1) published with display-test limitations in the release notes.
 - [x] [AUR publish job](https://github.com/YahyaZekry/rovyl-linux/actions/runs/43451858757) pushed commit `841d814`; the AUR PKGBUILD shows 1.17.1 and its SHA-256 matches the published AppImage. The RPC index initially still returned 1.17.0 immediately after publication.
 - [ ] [Chaotic-AUR request #4539](https://github.com/chaotic-aur/packages/issues/4539) remains open and needs triage; no acceptance is claimed.
+- [x] AUR permission repair revision `1.17.1-2` published as AUR commit `7a50535`; built the actual package with makepkg and verified archive modes. The AUR RPC index initially still showed `1.17.1-1`; launch on the affected machine remains to be tested.
 - Multi-monitor, fractional scaling and mixed scaling remain untested.
 
 ## Verified
