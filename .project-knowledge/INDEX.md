@@ -3,7 +3,7 @@
 > Last updated: 2026-11-13 (current desktop confirmed; multiple monitors and scaling still untested)
 > Status: Active
 > Stack: Electron 44.3.0 + React 18 + TypeScript + Vite 8 + Tailwind 4 (main process: plain CJS JS)
-> Current goal: verify quiet startup and remaining display combinations; latest KDE placement/Area fix user-confirmed. Full upstream integration remains incomplete. v1.17.1 is live on GitHub and AUR; Chaotic-AUR acceptance remains pending
+> Current goal: verify quiet startup and remaining display combinations; latest KDE placement/Area fix user-confirmed. Full upstream integration remains incomplete. v1.17.2 is live on GitHub and AUR; Chaotic-AUR acceptance remains pending
 
 ## What This Project Does
 

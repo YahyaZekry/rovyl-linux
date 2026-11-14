@@ -9,7 +9,7 @@ Maintain the Linux Electron app independently of upstream's Windows-native rewri
 
 1. User confirmed quiet startup and current desktop behavior on 2026-11-13; keep multi-monitor and scaling acceptance open.
 2. Upstream integration remains incomplete: 73 incoming commits were not merged; the workflow only reports them. Twenty-eight commits belong to the last compatible Electron-era line through 1.19. Selected settings polish and optional sounds are now ported (five Electron commits); dismissal changes were skipped at the user’s request. Keep the Windows-native rewrite out of this Linux app; no full upstream merge is claimed.
-3. v1.17.1 is published on GitHub and AUR; monitor Chaotic-AUR triage and test the display combinations listed below.
+3. v1.17.2 is published on GitHub and AUR; monitor Chaotic-AUR triage and test the display combinations listed below.
 4. Keep deb udev/postinst polish and Windows compatibility checks separate from this Linux release.
 
 **Recently shipped:** v1.16 upstream merge (by hand); Linux system dock with live readings

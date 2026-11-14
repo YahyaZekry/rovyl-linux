@@ -25,9 +25,14 @@ while downloading system dependencies because package servers could not be resol
 Failed jobs were retried once; results remain pending. Wayland E2E was still running
 when checked. The older successful run links below do not verify this latest commit.
 
-## v1.17.2 preparation (2026-11-14)
+## v1.17.2 publication (2026-11-14)
 
-The first-run dialog used an undefined spacing token, an out-of-scope titlebar token and a button selector scoped to another subtree. These caused missing padding, clipping and default button styling. The layer now gets a titlebar fallback and theme, the dialog fits/scrolls in short windows with its action visible, and the shared button style applies. Browser previews passed for dark/light themes and a short viewport. AUR packaging disables unnecessary strip/debug processing for prebuilt binaries; an actual makepkg build completed without the reported gdb-index errors. The app shows its upstream version; the AUR `-2` suffix is the package revision. v1.17.2 publication and the affected machine's retest are pending.
+- [x] [Tests](https://github.com/YahyaZekry/rovyl-linux/actions/runs/43608282390), [tagged Linux builds](https://github.com/YahyaZekry/rovyl-linux/actions/runs/43608423630), and [AUR publish](https://github.com/YahyaZekry/rovyl-linux/actions/runs/43608721751) passed.
+- [x] GitHub release has one AppImage and four distro-specific deb files; its AppImage SHA-256 `af379a84d429b57aba3921720cb6b5a8615c819f5c4ca08810b1297416898606` matches the AUR PKGBUILD. AUR RPC reports 1.17.2-1. GitLab tag points to matching source content.
+- [ ] Retest the actual onboarding dialog and normal-user launch on the affected machine. Multi-monitor/scaling remain untested.
+
+
+The first-run dialog used an undefined spacing token, an out-of-scope titlebar token and a button selector scoped to another subtree. These caused missing padding, clipping and default button styling. The layer now gets a titlebar fallback and theme, the dialog fits/scrolls in short windows with its action visible, and the shared button style applies. Browser previews passed for dark/light themes and a short viewport. AUR packaging disables unnecessary strip/debug processing for prebuilt binaries; an actual makepkg build completed without the reported gdb-index errors. The app shows its upstream version; the AUR `-2` suffix is the package revision. v1.17.2 is published on GitHub and AUR (1.17.2-1); the affected machine's retest is pending.
 
 ## v1.17.1 publication (2026-11-13)
 
