@@ -127,3 +127,10 @@ User confirmed quiet startup and current desktop behavior and requested publicat
 ### 2026-11-13 — Publish v1.17.1
 
 Published GitHub release v1.17.1 after Tests and all five tagged package builds passed; uploaded one AppImage and four uniquely named distro deb files. AUR publish job succeeded and pushed `841d814`; AUR PKGBUILD 1.17.1 SHA-256 `40122ef2f0f31222844150f187b7bb4166357cd68ad292b70b463fe66ba5339d` matches the release asset. AUR RPC initially remained cached at 1.17.0. The Chaotic-AUR request #4539 is still open and needs triage; the old MR was closed unmerged. Multi-monitor and scaling acceptance remains untested.
+
+
+### 2026-11-14 — Repair AUR package permissions
+
+User reported `/opt/Rovyl/rovyl: Permission denied` on another machine. Reproduced AppImage extraction: `squashfs-root` and `resources` are mode 0700, and `cp -a squashfs-root/.` preserves that mode on `/opt/Rovyl`, making the installed application inaccessible to normal users. AUR packaging now grants read and traversal/execution where appropriate (`chmod -R a+rX`), with a regression smoke test using deliberately restrictive extracted files. Package revision 1.17.1-2 and the workflow’s explicit revision input were prepared; publication and non-root installation require verification. Running the desktop app with sudo does not provide the ordinary user session.
+
+Built the actual 1.17.1 release AppImage with `makepkg` as revision 2; the resulting package archive lists `/opt/Rovyl` and its resources as 0755/0644 and both executable binaries as 0755. The smoke test also checks that AUR publishing rejects older versions/revisions, preventing a later workflow rerun from downgrading this repair. Actual AUR publication and the other machine’s launch are still to be verified.

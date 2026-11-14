@@ -12,6 +12,10 @@ on:
       tag:
         description: "Release tag to publish to the AUR (e.g. v1.17.0)"
         required: true
+      pkgrel:
+        description: "AUR package revision (defaults to 1)"
+        required: false
+        default: "1"
 
 jobs:
   aur:
@@ -33,22 +37,32 @@ jobs:
         env:
           RUN_TAG: ${{ github.event.workflow_run.head_branch }}
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PKGREL: ${{ inputs.pkgrel }}
         run: |
           TAG="${INPUT_TAG:-$RUN_TAG}"
           if [[ ! "$TAG" =~ ^v[0-9] ]]; then
             echo "::error::Not a version tag: '$TAG'"
             exit 1
           fi
+          REL="${INPUT_PKGREL:-1}"
+          if [[ ! "$REL" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Invalid AUR package revision"
+            exit 1
+          fi
           VER=${TAG#v}
           curl -fL -o rovyl.AppImage "https://github.com/${{ github.repository }}/releases/download/${TAG}/Rovyl-${VER}-linux.AppImage"
           echo "VER=$VER" >> "$GITHUB_ENV"
+          echo "REL=$REL" >> "$GITHUB_ENV"
           echo "SHA=$(sha256sum rovyl.AppImage | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Verify package permissions
+        run: bash scripts/aur-package-smoke.sh
 
       - name: Update PKGBUILD and .SRCINFO
         run: |
           cd aur
           sed -i "s/^pkgver=.*/pkgver=$VER/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=$REL/" PKGBUILD
           sed -i "s/^sha256sums=.*/sha256sums=('$SHA')/" PKGBUILD
           useradd -m builder
           chown -R builder .
@@ -65,10 +79,21 @@ jobs:
           ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o StrictHostKeyChecking=accept-new"
           git clone ssh://aur@aur.archlinux.org/rovyl-bin.git aur-repo
-          cp aur/PKGBUILD aur/.SRCINFO aur-repo/
           cd aur-repo
+          CURRENT_VER=$(sed -n 's/^pkgver=//p' PKGBUILD | head -1)
+          CURRENT_REL=$(sed -n 's/^pkgrel=//p' PKGBUILD | head -1)
+          if [[ -z "$CURRENT_VER" || -z "$CURRENT_REL" ]]; then
+            echo "::error::Cannot determine the currently published AUR version"
+            exit 1
+          fi
+          COMPARISON=$(vercmp "$VER-$REL" "$CURRENT_VER-$CURRENT_REL")
+          if (( COMPARISON < 0 )); then
+            echo "::error::Refusing to downgrade the AUR package from $CURRENT_VER-$CURRENT_REL to $VER-$REL"
+            exit 1
+          fi
+          cp ../aur/PKGBUILD ../aur/.SRCINFO .
           git config user.name "YahyaZekry"
           git config user.email "YahyaZekry@users.noreply.github.com"
           git add PKGBUILD .SRCINFO
-          git commit -m "Update to $VER" || echo "No changes to commit"
+          git commit -m "Update to $VER-$REL" || echo "No changes to commit"
           git push origin master

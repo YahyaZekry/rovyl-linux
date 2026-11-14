@@ -34,6 +34,9 @@ jobs:
       - name: Renderer + helper build (runs the handshake and bundle verifiers)
         run: npm run build
 
+      - name: AUR package permissions
+        run: bash scripts/aur-package-smoke.sh
+
       - name: Smoke suite
         run: |
           set -e
