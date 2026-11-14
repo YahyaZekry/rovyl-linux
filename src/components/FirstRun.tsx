@@ -27,7 +27,8 @@ const MOUSE_BUTTON_NAMES: Record<string, string> = {
 export const FirstRun: React.FC<{
   config: UIConfig;
   onDismiss: () => void;
-}> = ({ config, onDismiss }) => {
+  theme: 'black' | 'white';
+}> = ({ config, onDismiss, theme }) => {
   const shortcut = (config.globalShortcut || 'Alt+Z').split('+').filter(Boolean);
   const mouseButton = MOUSE_BUTTON_NAMES[config.mouseTriggerButton ?? 'middle'] ?? 'the mouse wheel button';
   const byHold = config.mouseTriggerMode === 'hold';
@@ -39,7 +40,7 @@ export const FirstRun: React.FC<{
   const byDirection = handsFree || config.radialSelectionMode !== 'cursor';
 
   return (
-    <div className="zs-firstrun-layer" role="presentation">
+    <div className="zs-firstrun-layer" data-zn-theme={theme} role="presentation">
       <section className="zs-firstrun" role="dialog" aria-modal="true" aria-labelledby="zs-firstrun-title">
         <header>
           <h1 id="zs-firstrun-title">Rovyl is running</h1>

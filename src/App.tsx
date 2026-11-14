@@ -1535,6 +1535,7 @@ export default function App() {
         {isLoaded && config.hasSeenOnboarding !== true && panelSurfaceOpen && (
           <React.Suspense fallback={null}>
             <FirstRun
+              theme={panelTheme}
               config={config}
               onDismiss={() => setConfig((current) => ({ ...current, hasSeenOnboarding: true }))}
             />

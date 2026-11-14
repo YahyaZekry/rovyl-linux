@@ -656,7 +656,7 @@
 /* ── Controls ───────────────────────────────────────────────────────────── */
 
 /* They all share height, radius, border and typography. */
-.zs-shell .zs-btn {
+.zs-shell .zs-btn, .zs-firstrun .zs-btn {
   height: var(--zn-ctl); display: inline-flex; align-items: center; gap: var(--zn-2);
   padding-inline: var(--zn-3);
   color: var(--zn-text); border: 1px solid var(--zn-line); border-radius: var(--zn-r-control); background: transparent; cursor: pointer;
@@ -1804,14 +1804,14 @@
    Above the settings surface and below the fault card: an error still has to be readable, even on
    the first launch that produced it. */
 .zs-firstrun-layer {
-  position: absolute; inset: var(--zenith-title-bar-h) 0 0; z-index: 60;
+  position: absolute; inset: var(--zenith-title-bar-h, 38px) 0 0; z-index: 60;
   display: grid; place-items: center; padding: var(--zn-6);
   background: rgba(6, 7, 9, .72);
 }
-[data-zn-theme="white"] .zs-firstrun-layer { background: rgba(232, 232, 234, .78); }
+.zs-firstrun-layer[data-zn-theme="white"] { background: rgba(232, 232, 234, .78); }
 .zs-firstrun {
-  width: min(460px, 100%); max-height: 100%; overflow-y: auto;
-  padding: var(--zn-7) var(--zn-7) var(--zn-6);
+  width: min(460px, 100%); min-height: 0; max-height: 100%; box-sizing: border-box; overflow-y: auto;
+  padding: var(--zn-6);
   border: 1px solid var(--zn-line); border-radius: var(--zn-r-panel, 14px);
   background: var(--zn-surface); box-shadow: var(--zn-elev);
 }
@@ -1832,7 +1832,7 @@
   background: var(--zn-raised); font: 500 11px/1 var(--font-ui); text-align: center; vertical-align: baseline;
 }
 .zs-firstrun-plus { margin: 0 2px; color: var(--zn-text-3); }
-.zs-firstrun footer { display: flex; align-items: center; gap: var(--zn-3); flex-wrap: wrap; }
+.zs-firstrun footer { position: sticky; bottom: calc(-1 * var(--zn-6)); display: flex; align-items: center; gap: var(--zn-3); flex-wrap: wrap; padding: var(--zn-3) 0 var(--zn-6); margin-bottom: calc(-1 * var(--zn-6)); background: var(--zn-surface); }
 .zs-firstrun footer .zs-btn { flex: none; }
 .zs-firstrun footer small { color: var(--zn-text-3); font-size: 10.5px; line-height: 1.4; }
 

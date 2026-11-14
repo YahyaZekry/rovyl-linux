@@ -15,6 +15,8 @@ pkgbase = rovyl-bin
 	provides = rovyl
 	conflicts = rovyl
 	noextract = rovyl-1.17.1.AppImage
+	options = !strip
+	options = !debug
 	source = rovyl-1.17.1.AppImage::https://github.com/YahyaZekry/rovyl-linux/releases/download/v1.17.1/Rovyl-1.17.1-linux.AppImage
 	sha256sums = 40122ef2f0f31222844150f187b7bb4166357cd68ad292b70b463fe66ba5339d
 

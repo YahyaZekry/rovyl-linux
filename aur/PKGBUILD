@@ -9,6 +9,7 @@ url="https://github.com/YahyaZekry/rovyl-linux"
 license=('GPL-3.0-or-later')
 depends=('gtk3' 'libxss' 'libxtst' 'nss' 'alsa-lib' 'libxkbcommon' 'dbus')
 optdepends=()
+options=('!strip' '!debug')
 provides=('rovyl')
 conflicts=('rovyl')
 source=("rovyl-${pkgver}.AppImage::https://github.com/YahyaZekry/rovyl-linux/releases/download/v${pkgver}/Rovyl-${pkgver}-linux.AppImage")

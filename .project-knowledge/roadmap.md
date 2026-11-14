@@ -21,6 +21,8 @@ taskbar icon fix; two-sided calibration + double-click option; settings category
 
 ## Known Bugs
 
+- [ ] Verify v1.17.2 first-run dialog and normal launch on the affected AUR machine. User reported a clipped, unpadded dialog and unstyled Got it button; a browser preview passed at normal and short heights in both themes. Multi-monitor/scaling acceptance remains separate.
+
 - [ ] Verify launch as an unprivileged user on the affected machine. AUR `1.17.1-1` installed owner-only folders; revision `1.17.1-2` fixes their permissions and was published in AUR commit `7a50535`. The public RPC index still returned `1.17.1-1` immediately after publication.
 
 - User confirmed the Near mouse/Area fix on the current KDE desktop on 2026-11-11. This is not acceptance of every display configuration.
